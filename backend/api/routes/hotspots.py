@@ -38,7 +38,7 @@ def _clean_response_data(data):
 @router.get("/hotspots")
 async def get_hotspots(
     target_date: str = Query(..., description="Target date in YYYY-MM-DD format"),
-    shark_species: str = Query(..., description="Shark species: 'great_white' or 'tiger_shark'"),
+    shark_species: str = Query(..., description="Shark species: 'great_white', 'tiger_shark', or 'bull_shark'"),
     format: str = Query("geojson", description="Output format: 'geojson' or 'raw'"),
     north: float = Query(None, description="Northern boundary (latitude)"),
     south: float = Query(None, description="Southern boundary (latitude)"),
@@ -156,12 +156,22 @@ async def get_hotspots(
         
         # Calculate HSI with lagged data
         sea_level_data = datasets.get('sea_level')
+        salinity_data = datasets.get('salinity')
+        
+        # Check if salinity data is available
+        if salinity_data is None:
+            logger.error("Salinity data not available - cannot calculate HSI without salinity filtering")
+            raise HTTPException(
+                status_code=422,
+                detail="Salinity data is required but not available. Cannot calculate HSI without salinity filtering."
+            )
         
         try:
             hsi_result = hsi_model.calculate_hsi(
                 chlorophyll_data=datasets['chlorophyll'],
                 sea_level_data=sea_level_data,
                 sst_data=datasets['sst'],
+                salinity_data=salinity_data,
                 shark_species=shark_species,
                 target_date=target_date,
                 geographic_bounds=geographic_bounds,

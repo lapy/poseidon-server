@@ -28,6 +28,8 @@ class SharkProfile:
     w_c: float  # Chlorophyll weight
     w_e: float  # Sea level anomaly weight
     w_s: float  # Temperature weight
+    salinity_min: float  # Minimum salinity tolerance (psu)
+    salinity_max: float  # Maximum salinity tolerance (psu)
     
     @property
     def total_weight(self) -> float:
@@ -47,7 +49,9 @@ class HSIModel:
                 c_lag=30,  # 30-day chlorophyll lag
                 w_c=0.4,  # Chlorophyll weight
                 w_e=0.3,  # Sea level anomaly weight
-                w_s=0.3   # Temperature weight
+                w_s=0.3,   # Temperature weight
+                salinity_min=30.0,  # Minimum salinity tolerance (psu)
+                salinity_max=37.0   # Maximum salinity tolerance (psu)
             ),
             'tiger_shark': SharkProfile(
                 name='Tiger Shark',
@@ -57,7 +61,21 @@ class HSIModel:
                 c_lag=21,  # 21-day chlorophyll lag
                 w_c=0.3,  # Chlorophyll weight
                 w_e=0.4,  # Sea level anomaly weight
-                w_s=0.3   # Temperature weight
+                w_s=0.3,   # Temperature weight
+                salinity_min=30.0,  # Minimum salinity tolerance (psu)
+                salinity_max=37.0   # Maximum salinity tolerance (psu)
+            ),
+            'bull_shark': SharkProfile(
+                name='Bull Shark',
+                s_opt=22.0,  # Optimal temperature in Celsius
+                sigma_s=6.0,  # Temperature tolerance
+                t_lag=3,  # 3-day temperature lag
+                c_lag=14,  # 14-day chlorophyll lag
+                w_c=0.35,  # Chlorophyll weight
+                w_e=0.35,  # Sea level anomaly weight
+                w_s=0.3,   # Temperature weight
+                salinity_min=0.5,   # Minimum salinity tolerance (psu) - highly adaptable
+                salinity_max=35.0   # Maximum salinity tolerance (psu)
             )
         }
     
@@ -65,21 +83,25 @@ class HSIModel:
                      chlorophyll_data: xr.Dataset,
                      sea_level_data: xr.Dataset,
                      sst_data: xr.Dataset,
+                     salinity_data: xr.Dataset,
                      shark_species: str,
                      target_date: str,
                      geographic_bounds: Dict = None,
                      lagged_chlorophyll_data: xr.Dataset = None,
                      lagged_sst_data: xr.Dataset = None) -> xr.Dataset:
         """
-        Calculate Habitat Suitability Index with trophic lag support
+        Calculate Habitat Suitability Index with trophic lag support and salinity filtering
         
-        H(x,y,t) = (f_C(C')^w_C * f_E(E')^w_E * f_S(S)^w_S)^(1/(w_C + w_E + w_S))
+        H(x,y,t) = f_sal(S) * (f_C(C')^w_C * f_E(E')^w_E * f_S(S)^w_S)^(1/(w_C + w_E + w_S))
+        
+        Where f_sal(S) is a binary salinity filter that excludes areas where sharks cannot survive.
         
         Args:
             chlorophyll_data: Chlorophyll-a concentration data (current)
             sea_level_data: Sea level anomaly data (current)
             sst_data: Sea surface temperature data (current)
-            shark_species: Species name ('great_white' or 'tiger_shark')
+            salinity_data: Sea surface salinity data (current)
+            shark_species: Species name ('great_white', 'tiger_shark', or 'bull_shark')
             target_date: Target date in YYYY-MM-DD format
             geographic_bounds: Geographic bounds for filtering (optional)
             lagged_chlorophyll_data: Lagged chlorophyll data (optional)
@@ -100,6 +122,7 @@ class HSIModel:
                 chlorophyll_data = self._apply_geographic_filter(chlorophyll_data, geographic_bounds)
                 sea_level_data = self._apply_geographic_filter(sea_level_data, geographic_bounds)
                 sst_data = self._apply_geographic_filter(sst_data, geographic_bounds)
+                salinity_data = self._apply_geographic_filter(salinity_data, geographic_bounds)
                 
                 if lagged_chlorophyll_data is not None:
                     lagged_chlorophyll_data = self._apply_geographic_filter(lagged_chlorophyll_data, geographic_bounds)
@@ -128,10 +151,21 @@ class HSIModel:
                 logger.error("SST data not available - cannot continue HSI calculation")
                 raise ValueError("SST data is required but not available. Cannot calculate HSI without temperature data.")
             
+            # Extract salinity data (no lag - salinity is relatively stable)
+            if salinity_data is not None and 'salinity' in salinity_data.data_vars:
+                salinity = salinity_data['salinity']
+                logger.info("Using current salinity data")
+            else:
+                logger.error("Salinity data not available - cannot continue HSI calculation")
+                raise ValueError("Salinity data is required but not available. Cannot calculate HSI without salinity data.")
+            
             # Normalize data
             f_c = self._normalize_chlorophyll(chl)
             f_e = self._normalize_sea_level_anomaly(sla)
             f_s = self._calculate_temperature_suitability(sst, profile)
+            
+            # Calculate salinity suitability filter (binary: 1 for suitable, 0 for unsuitable)
+            f_sal = self._calculate_salinity_suitability(salinity, profile)
             
             # Handle missing sea level data by using default sea level suitability where data is missing
             # Replace NaN sea level suitability with neutral value (0.5)
@@ -142,10 +176,10 @@ class HSIModel:
                 logger.info(f"Sea level data missing for {sea_level_nan_count}/{total_points} points ({100*sea_level_nan_count/total_points:.1f}%) - using neutral suitability (0.5)")
             f_e_filled = f_e.where(~np.isnan(f_e), 0.5)
             
-            # Calculate HSI with filled sea level data
-            hsi = ((f_c ** profile.w_c) * 
-                   (f_e_filled ** profile.w_e) * 
-                   (f_s ** profile.w_s)) ** (1.0 / profile.total_weight)
+            # Calculate HSI with filled sea level data and salinity filtering
+            hsi = f_sal * ((f_c ** profile.w_c) * 
+                          (f_e_filled ** profile.w_e) * 
+                          (f_s ** profile.w_s)) ** (1.0 / profile.total_weight)
             
             # Replace any NaN values with 0
             hsi = hsi.where(~np.isnan(hsi), 0.0)
@@ -155,7 +189,8 @@ class HSIModel:
                 'hsi': hsi,
                 'chlorophyll_suitability': f_c,
                 'sea_level_suitability': f_e,
-                'temperature_suitability': f_s
+                'temperature_suitability': f_s,
+                'salinity_suitability': f_sal
             })
             
             # Add metadata
@@ -170,7 +205,9 @@ class HSIModel:
                     'c_lag': profile.c_lag,
                     'w_c': profile.w_c,
                     'w_e': profile.w_e,
-                    'w_s': profile.w_s
+                    'w_s': profile.w_s,
+                    'salinity_min': profile.salinity_min,
+                    'salinity_max': profile.salinity_max
                 }
             })
             
@@ -301,6 +338,39 @@ class HSIModel:
             logger.error(f"Temperature suitability calculation failed: {e}")
             return xr.ones_like(sst)
     
+    def _calculate_salinity_suitability(self, salinity: xr.DataArray, profile: SharkProfile) -> xr.DataArray:
+        """
+        Calculate salinity suitability using binary filtering
+        f_sal(S) = 1 if salinity_min <= S <= salinity_max, else 0
+        
+        This function implements a binary habitat filter that excludes areas where sharks
+        cannot survive based on salinity tolerance levels. This is a critical component
+        for accurate habitat suitability predictions as sharks are stenohaline (cannot
+        tolerate wide salinity variations) except for euryhaline species like bull sharks.
+        """
+        try:
+            # Remove invalid values
+            salinity_clean = salinity.where(np.isfinite(salinity))
+            
+            # Apply binary salinity filter based on species tolerance
+            # 1 = suitable salinity range, 0 = unsuitable (sharks cannot survive)
+            salinity_suitable = ((salinity_clean >= profile.salinity_min) & 
+                               (salinity_clean <= profile.salinity_max)).astype(float)
+            
+            # Count excluded areas for logging
+            total_points = salinity_clean.size
+            excluded_points = np.sum(salinity_suitable.values == 0)
+            if excluded_points > 0:
+                exclusion_percent = 100 * excluded_points / total_points
+                logger.info(f"Salinity filtering excluded {excluded_points}/{total_points} points ({exclusion_percent:.1f}%) outside {profile.salinity_min}-{profile.salinity_max} psu range")
+            
+            return salinity_suitable
+            
+        except Exception as e:
+            logger.error(f"Salinity suitability calculation failed: {e}")
+            # Return all suitable in case of error (conservative approach)
+            return xr.ones_like(salinity)
+    
     def get_shark_profiles(self) -> Dict[str, Dict[str, Any]]:
         """Get available shark species profiles"""
         return {
@@ -312,7 +382,9 @@ class HSIModel:
                 'c_lag': profile.c_lag,
                 'w_c': profile.w_c,
                 'w_e': profile.w_e,
-                'w_s': profile.w_s
+                'w_s': profile.w_s,
+                'salinity_min': profile.salinity_min,
+                'salinity_max': profile.salinity_max
             }
             for species, profile in self.shark_profiles.items()
         }

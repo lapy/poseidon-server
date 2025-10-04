@@ -51,7 +51,7 @@ Our solution directly addresses the challenge by:
 
 ## 📊 Data Sources
 
-The application uses three NASA satellite datasets with enhanced processing:
+The application uses four NASA satellite datasets with enhanced processing:
 
 ### 1. Phytoplankton/Chlorophyll-a
 - **Mission/Instrument**: PACE (Plankton, Aerosol, Cloud, ocean Ecosystem) / OCI (Ocean Color Instrument)
@@ -90,21 +90,36 @@ The application uses three NASA satellite datasets with enhanced processing:
 - **Short Name**: `VIIRSN_L3m_SST3`
 - **Details**: Daily SST measurements using thermal infrared data at 750m resolution (at nadir). Provides high-resolution global coverage with quality-controlled temperature data for habitat suitability analysis.
 
+### 4. Sea Surface Salinity (SSS)
+- **Mission/Instrument**: Multi-mission (SMAP, SMOS, Aquarius)
+- **Product**: Multi-Mission Optimally Interpolated Sea Surface Salinity Global Monthly Dataset V2
+- **Short Name**: `OISSS_L4_multimission_monthly_v2`
+- **Details**: Monthly composite salinity data at 0.25° resolution providing global coverage for habitat filtering. This dataset is critical for excluding areas where sharks cannot survive based on salinity tolerance levels.
+
 #### Data Processing Enhancements:
 - **Adjacent Temporal Merging**: Uses ±7 days of data to maximize coverage and fill gaps
 - **Quality Control**: Implements VIIRS quality flags (qual_sst ≤ 1) and fill value filtering
 - **Temperature Range Validation**: Filters unrealistic values (< -2°C or > 35°C)
 - **Unit Conversion**: Automatic conversion from Kelvin to Celsius when needed
 
+#### Salinity Processing Enhancements:
+- **Monthly Temporal Resolution**: Uses monthly composites for stable salinity patterns
+- **Time-Insensitive Fetching**: Uses hardcoded December 2022 data (latest reliable OISSS L4 availability)
+- **Generic Caching**: Caches salinity data with 'latest' key for efficient reuse across dates
+- **Quality Control**: Implements OISSS quality flags (quality_flag ≤ 1) and fill value filtering
+- **Salinity Range Validation**: Filters unrealistic values (< 0 psu or > 40 psu)
+- **Species-Specific Filtering**: Binary habitat filtering based on shark salinity tolerance ranges
+
 ## 🧮 HSI Model
 
 The Habitat Suitability Index is calculated using the formula:
 
 ```
-H(x,y,t) = (f_C(C')^w_C × f_E(E')^w_E × f_S(S)^w_S)^(1/(w_C + w_E + w_S))
+H(x,y,t) = f_sal(S) × (f_C(C')^w_C × f_E(E')^w_E × f_S(S)^w_S)^(1/(w_C + w_E + w_S))
 ```
 
 Where:
+- `f_sal(S)`: Binary salinity filter (1 for suitable salinity, 0 for unsuitable)
 - `f_C`: Normalized chlorophyll concentration (food web foundation)
 - `f_E`: Combined eddy and front suitability from sea level anomaly
 - `f_S`: Gaussian temperature suitability (habitability filter)
@@ -132,6 +147,8 @@ Where:
 - **Missing Data Handling**: Uses neutral sea level suitability (0.5) where data unavailable
 - **Spatial Regridding**: Aligns all datasets to a common 0.25° global grid
 - **Geographic Filtering**: Supports viewport-based processing for performance optimization
+- **Salinity Habitat Filtering**: Binary filtering excludes areas where sharks cannot survive based on species-specific salinity tolerance ranges
+- **Time-Insensitive Salinity**: Uses December 2022 salinity data (latest reliable OISSS L4 availability) since ocean salinity patterns are relatively stable
 
 ## 🚀 Quick Start
 
@@ -211,7 +228,7 @@ poseidon-server/
 
 ### Shark Species Profiles
 
-The application includes predefined profiles for two shark species:
+The application includes predefined profiles for three shark species:
 
 #### Great White Shark
 - Optimal Temperature: 18°C
@@ -219,6 +236,7 @@ The application includes predefined profiles for two shark species:
 - Temperature Lag: 7 days
 - Chlorophyll Lag: 30 days
 - Weights: Chlorophyll (0.4), Sea Level (0.3), Temperature (0.3)
+- Salinity Range: 30.0-37.0 psu
 
 #### Tiger Shark
 - Optimal Temperature: 25°C
@@ -226,11 +244,21 @@ The application includes predefined profiles for two shark species:
 - Temperature Lag: 5 days
 - Chlorophyll Lag: 21 days
 - Weights: Chlorophyll (0.3), Sea Level (0.4), Temperature (0.3)
+- Salinity Range: 30.0-37.0 psu
+
+#### Bull Shark
+- Optimal Temperature: 22°C
+- Temperature Tolerance: 6°C
+- Temperature Lag: 3 days
+- Chlorophyll Lag: 14 days
+- Weights: Chlorophyll (0.35), Sea Level (0.35), Temperature (0.3)
+- Salinity Range: 0.5-35.0 psu (highly adaptable)
 
 ### Data Sources
 - **Chlorophyll**: PACE OCI Level-3 Monthly Composite
 - **Sea Level**: NASA-SSH Simple Gridded Sea Surface Height L4 (7-day resolution, 0.5° grid, SSHA variable)
 - **Temperature**: VIIRS NPP Level-3 mapped SST (Daily resolution, 750m at nadir)
+- **Salinity**: OISSS L4 Multi-Mission Sea Surface Salinity V2 (Monthly resolution, 0.25° grid, SSS variable)
 
 ### API Endpoints
 
@@ -244,7 +272,7 @@ The application includes predefined profiles for two shark species:
 
 ## 🗺️ Usage
 
-1. **Select Species**: Choose from Great White Shark or Tiger Shark
+1. **Select Species**: Choose from Great White Shark, Tiger Shark, or Bull Shark
 2. **Pick Date**: Select a target date for prediction
 3. **Adjust Threshold**: Set HSI threshold for visualization (0.0-1.0)
 4. **Optional - Viewport Filtering**: Enable "Limit to Map View" to process only the visible map area for faster performance
@@ -460,6 +488,8 @@ For questions, issues, or contributions, please:
 
 ## 🔮 Future Enhancements
 
+- [x] Salinity-based habitat filtering
+- [x] Bull shark species profile
 - [ ] Additional shark species profiles
 - [ ] Real-time data streaming
 - [ ] Machine learning model integration

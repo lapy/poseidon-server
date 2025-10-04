@@ -62,6 +62,22 @@ class NASADataManager:
                 'description': 'VIIRS NPP Level-3 mapped Sea Surface Temperature (SST)',
                 'variable': 'sst_triple',
                 'units': '°C'
+            },
+            'salinity': {
+                'short_name': 'OISSS_L4_multimission_monthly_v2',
+                'description': 'Multi-Mission Optimally Interpolated Sea Surface Salinity Global Monthly Dataset V2',
+                'variable': 'sss',
+                'units': 'psu',
+                'temporal_resolution': 'monthly',
+                'spatial_resolution': '0.25 degrees',
+                'coverage_note': 'Global coverage with monthly composites for stable salinity patterns',
+                'shark_habitat_filtering': {
+                    'bull_shark_range': (0.5, 35.0),
+                    'great_white_shark_range': (30.0, 37.0),
+                    'tiger_shark_range': (30.0, 37.0),
+                    'spiny_dogfish_minimum': 21.0,
+                    'default_minimum': 30.0
+                }
             }
         }
         
@@ -185,6 +201,12 @@ class NASADataManager:
                 logger.info("Added cloud_hosted=True for NASA-SSH L4 sea level search")
                 # NASA-SSH L4 has 7-day temporal resolution
                 logger.info("Note: NASA-SSH L4 has 7-day temporal resolution")
+            elif dataset == 'salinity':
+                # OISSS L4 salinity specific parameters
+                search_params['cloud_hosted'] = True
+                logger.info("Added cloud_hosted=True for OISSS L4 salinity search")
+                # OISSS L4 has monthly temporal resolution
+                logger.info("Note: OISSS L4 has monthly temporal resolution")
             
             logger.info(f"Search parameters: {search_params}")
             results = earthaccess.search_data(**search_params)
@@ -227,9 +249,13 @@ class NASADataManager:
     
     def download_data(self, dataset: str, target_date: str, geographic_bounds: Dict = None) -> Optional[xr.Dataset]:
         """Download and process data for a specific date"""
-        date_str = target_date.replace('-', '')
-        
-        logger.info(f"Starting download for {dataset} on {target_date}")
+        # For salinity, use a generic cache key since it's time-insensitive
+        if dataset == 'salinity':
+            date_str = 'latest'  # Use generic cache key for salinity
+            logger.info(f"Starting download for {dataset} (using latest available data)")
+        else:
+            date_str = target_date.replace('-', '')
+            logger.info(f"Starting download for {dataset} on {target_date}")
         
         # Check cache first (by date only since datasets are global)
         if self._is_cached(dataset, date_str):
@@ -249,6 +275,13 @@ class NASADataManager:
             if dataset == 'sea_level':
                 # NASA-SSH L4 has 7-day temporal resolution
                 search_window = 7
+            elif dataset == 'salinity':
+                # OISSS L4 has monthly temporal resolution - use hardcoded latest available date
+                # Salinity is relatively stable, and OISSS L4 data is typically 1-2 years behind
+                # Use a known good date from 2022 when data is reliably available
+                target_date = "2022-12-01"  # December 2022 - typically latest reliable OISSS L4 data
+                logger.info(f"Using hardcoded latest date for salinity: {target_date}")
+                search_window = 90  # Wider search window for monthly data
             else:
                 # Default 7-day window for other datasets
                 search_window = 7
@@ -299,7 +332,9 @@ class NASADataManager:
                         processed_data = self._process_data(data, dataset)
                         
                         # Save to cache (by date only since datasets are global)
-                        self._save_to_cache(processed_data, dataset, date_str)
+                        # For salinity, use 'latest' as cache key since it's time-insensitive
+                        cache_key = 'latest' if dataset == 'salinity' else date_str
+                        self._save_to_cache(processed_data, dataset, cache_key)
                         
                         # Apply geographic filtering if bounds provided
                         if geographic_bounds:
@@ -329,6 +364,8 @@ class NASADataManager:
                 return self._process_sea_level(data)
             elif dataset == 'sst':
                 return self._process_sst(data)
+            elif dataset == 'salinity':
+                return self._process_salinity(data)
             else:
                 return data
         except Exception as e:
@@ -546,6 +583,86 @@ class NASADataManager:
             logger.error(f"VIIRS SST processing failed: {e}")
             return data
     
+    def _process_salinity(self, data: xr.Dataset) -> xr.Dataset:
+        """Process OISSS L4 Multi-Mission Sea Surface Salinity data"""
+        try:
+            logger.info(f"Processing OISSS L4 salinity data. Available variables: {list(data.data_vars)}")
+            logger.info(f"Available coordinates: {list(data.coords)}")
+            logger.info(f"Dataset dimensions: {dict(data.dims)}")
+            
+            # OISSS L4 uses 'sss' as the primary variable for Sea Surface Salinity
+            expected_var = 'sss'
+            
+            if expected_var in data.data_vars:
+                sss_var = expected_var
+                logger.info(f"Found OISSS L4 salinity variable: {sss_var}")
+            else:
+                # Fallback to other possible variable names for OISSS L4 salinity
+                sss_vars = ['sss', 'salinity', 'sea_surface_salinity', 'sss_mean', 'salinity_mean']
+                sss_var = None
+                
+                for var in sss_vars:
+                    if var in data.data_vars:
+                        sss_var = var
+                        break
+                
+                if sss_var is None:
+                    logger.warning(f"Salinity variable not found. Available variables: {list(data.data_vars)}")
+                    if not data.data_vars:
+                        logger.error("No data variables found in salinity dataset!")
+                        return data
+                    sss_var = list(data.data_vars)[0]
+            
+            # Extract salinity data
+            sss_data = data[sss_var]
+            
+            # Handle fill values and invalid data for OISSS L4 salinity
+            # OISSS L4 typically uses -999.0 as fill value
+            if hasattr(sss_data, 'fill_value'):
+                sss_data = sss_data.where(sss_data != sss_data.fill_value)
+            else:
+                # Common OISSS fill value
+                sss_data = sss_data.where(sss_data != -999.0)
+            
+            # Apply quality flags if available
+            if 'quality_flag' in data.data_vars:
+                # OISSS quality flag: 0 = best quality, 1 = good quality, 2 = questionable, 3 = bad
+                good_quality = data['quality_flag'] <= 1
+                sss_data = sss_data.where(good_quality)
+                logger.info("Applied OISSS L4 salinity quality flag filtering (quality_flag <= 1)")
+            elif 'sss_quality' in data.data_vars:
+                # Alternative quality flag format
+                good_quality = data['sss_quality'] <= 1
+                sss_data = sss_data.where(good_quality)
+                logger.info("Applied OISSS L4 salinity quality flag filtering using sss_quality")
+            
+            # Remove physically unrealistic values (ocean salinity typically 0-40 psu)
+            sss_data = sss_data.where((sss_data >= 0) & (sss_data <= 40))
+            
+            # Create standardized dataset
+            processed = xr.Dataset({
+                'salinity': sss_data
+            })
+            
+            # Add metadata
+            processed.attrs.update({
+                'source': 'OISSS L4 Multi-Mission Sea Surface Salinity V2',
+                'variable': sss_var,
+                'units': 'psu',
+                'description': 'Multi-Mission Optimally Interpolated Sea Surface Salinity Global Monthly',
+                'temporal_resolution': 'Monthly',
+                'spatial_resolution': '0.25°',
+                'quality_control': 'OISSS quality flags applied',
+                'missions': 'SMAP, SMOS, Aquarius'
+            })
+            
+            # Regrid to common grid
+            return self._regrid_to_common_grid(processed, 'salinity')
+            
+        except Exception as e:
+            logger.error(f"OISSS L4 salinity processing failed: {e}")
+            return data
+    
     def _regrid_to_common_grid(self, data: xr.Dataset, var_name: str) -> xr.Dataset:
         """Regrid data to common global grid"""
         try:
@@ -602,6 +719,7 @@ class NASADataManager:
         """
         Get all required datasets for a specific date, including adjacent time periods for complete coverage.
         This helps fill gaps in datasets like NASA-SSH that have limited coverage in certain regions.
+        For salinity, uses latest available data since it's time-insensitive.
         """
         from datetime import datetime, timedelta
         
@@ -626,7 +744,9 @@ class NASADataManager:
             logger.info(f"Fetching data for {period_name} period: {date_str}")
             
             for dataset_name, config in self.datasets.items():
-                data = self.download_data(dataset_name, date_str, geographic_bounds)
+                # For salinity, always use the target date (will be converted to latest internally)
+                fetch_date = date_str if dataset_name != 'salinity' else target_date
+                data = self.download_data(dataset_name, fetch_date, geographic_bounds)
                 if data is not None:
                     all_datasets[dataset_name].append(data)
                     logger.info(f"  {dataset_name}: Successfully fetched {period_name} data")
@@ -637,8 +757,13 @@ class NASADataManager:
         merged_datasets = {}
         for dataset_name, data_list in all_datasets.items():
             if data_list:
-                merged_datasets[dataset_name] = self._merge_datasets(data_list, dataset_name)
-                logger.info(f"Merged {dataset_name} data from {len(data_list)} time periods")
+                # For salinity, just take the first (and only) dataset since it's the same for all periods
+                if dataset_name == 'salinity':
+                    merged_datasets[dataset_name] = data_list[0]
+                    logger.info(f"Using latest salinity data (time-insensitive)")
+                else:
+                    merged_datasets[dataset_name] = self._merge_datasets(data_list, dataset_name)
+                    logger.info(f"Merged {dataset_name} data from {len(data_list)} time periods")
             else:
                 merged_datasets[dataset_name] = None
                 logger.warning(f"No data available for {dataset_name} from any time period")

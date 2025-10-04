@@ -1,0 +1,35 @@
+---
+services:
+  poseidon-server:
+    build: .
+    container_name: poseidon-server
+    ports:
+      - "8000:8000"
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8000
+      - DEBUG=False
+      - EARTHDATA_USERNAME=${EARTHDATA_USERNAME:-"lapentad"}
+      - EARTHDATA_PASSWORD=${EARTHDATA_PASSWORD:-"@Hackathlone2025"}
+      - CACHE_DIR=/app/data_cache
+      - GRID_RESOLUTION=0.25
+    volumes:
+      - ./data_cache:/app/data_cache
+      - ./.env:/app/.env:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - poseidon-network
+
+networks:
+  poseidon-network:
+    driver: bridge
+
+volumes:
+  data_cache:
+    driver: local

@@ -3,6 +3,152 @@
  * Interactive map interface for visualizing HSI predictions
  */
 
+class WaterRippleAnimation {
+    constructor() {
+        this.canvas = document.getElementById('ripple');
+        this.ctx = this.canvas.getContext('2d');
+        this.bubbles = [];
+        this.time = 0;
+        this.gradientOffset = 0;
+        
+        // Create initial bubbles
+        for (let i = 0; i < 30; i++) {
+            this.createNewBubble();
+        }
+        
+        this.resize();
+        this.animate();
+        window.addEventListener('resize', () => this.resize());
+        this.canvas.addEventListener('click', (e) => this.addBubbleBurst(e.clientX, e.clientY));
+    }
+    
+    createNewBubble() {
+        this.bubbles.push({
+            x: Math.random() * this.canvas.width,
+            y: this.canvas.height + 50, // Start below screen
+            radius: 3 + Math.random() * 8, // Random size bubbles
+            speed: 0.5 + Math.random() * 1.5, // Random rise speed
+            wobble: Math.random() * Math.PI * 2, // For horizontal movement
+            wobbleSpeed: 0.02 + Math.random() * 0.03,
+            wobbleAmount: 10 + Math.random() * 30,
+            opacity: 0.3 + Math.random() * 0.5
+        });
+    }
+    
+    addBubbleBurst(x, y) {
+        // Create a burst of bubbles on click
+        for (let i = 0; i < 5; i++) {
+            this.bubbles.push({
+                x: x + (Math.random() - 0.5) * 50,
+                y: y,
+                radius: 3 + Math.random() * 6,
+                speed: 1 + Math.random() * 2,
+                wobble: Math.random() * Math.PI * 2,
+                wobbleSpeed: 0.03 + Math.random() * 0.05,
+                wobbleAmount: 15 + Math.random() * 25,
+                opacity: 0.5 + Math.random() * 0.3
+            });
+        }
+    }
+    
+    resize() {
+        this.canvas.width = window.innerWidth;
+        this.canvas.height = window.innerHeight;
+    }
+    
+    animate() {
+        this.time += 0.01;
+        this.gradientOffset += 0.2;
+        
+        // Draw animated gradient background
+        this.drawAnimatedBackground();
+        
+        // Update and draw bubbles
+        for (let i = this.bubbles.length - 1; i >= 0; i--) {
+            const bubble = this.bubbles[i];
+            
+            // Move bubble up
+            bubble.y -= bubble.speed;
+            
+            // Add wobble effect (side-to-side movement)
+            bubble.wobble += bubble.wobbleSpeed;
+            bubble.x += Math.sin(bubble.wobble) * 0.5;
+            
+            // Remove bubble if it goes off screen
+            if (bubble.y < -50) {
+                this.bubbles.splice(i, 1);
+                this.createNewBubble(); // Create a new one at the bottom
+                continue;
+            }
+            
+            // Draw the bubble
+            this.drawBubble(bubble);
+        }
+        
+        requestAnimationFrame(() => this.animate());
+    }
+    
+    drawAnimatedBackground() {
+        const gradient = this.ctx.createLinearGradient(
+            0, 0,
+            this.canvas.width, this.canvas.height
+        );
+        
+        // Create moving gradient effect by shifting color stops
+        const offset = (Math.sin(this.time * 0.5) + 1) * 0.1;
+        
+        gradient.addColorStop(0 + offset, 'rgba(12, 74, 110, 0.3)');
+        gradient.addColorStop(0.25 + offset, 'rgba(7, 89, 133, 0.3)');
+        gradient.addColorStop(0.5 + offset, 'rgba(3, 105, 161, 0.3)');
+        gradient.addColorStop(0.75 + offset, 'rgba(2, 132, 199, 0.3)');
+        gradient.addColorStop(1, 'rgba(14, 165, 233, 0.3)');
+        
+        this.ctx.fillStyle = gradient;
+        this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+    }
+    
+    drawBubble(bubble) {
+        // Draw bubble with highlight for 3D effect
+        const gradient = this.ctx.createRadialGradient(
+            bubble.x - bubble.radius * 0.3,
+            bubble.y - bubble.radius * 0.3,
+            bubble.radius * 0.1,
+            bubble.x,
+            bubble.y,
+            bubble.radius
+        );
+        
+        gradient.addColorStop(0, `rgba(255, 255, 255, ${bubble.opacity * 0.8})`);
+        gradient.addColorStop(0.3, `rgba(173, 216, 230, ${bubble.opacity * 0.6})`);
+        gradient.addColorStop(0.7, `rgba(96, 165, 250, ${bubble.opacity * 0.4})`);
+        gradient.addColorStop(1, `rgba(96, 165, 250, ${bubble.opacity * 0.1})`);
+        
+        // Draw main bubble
+        this.ctx.fillStyle = gradient;
+        this.ctx.beginPath();
+        this.ctx.arc(bubble.x, bubble.y, bubble.radius, 0, Math.PI * 2);
+        this.ctx.fill();
+        
+        // Draw bubble outline
+        this.ctx.strokeStyle = `rgba(255, 255, 255, ${bubble.opacity * 0.5})`;
+        this.ctx.lineWidth = 1;
+        this.ctx.beginPath();
+        this.ctx.arc(bubble.x, bubble.y, bubble.radius, 0, Math.PI * 2);
+        this.ctx.stroke();
+        
+        // Draw highlight spot (makes it look more realistic)
+        this.ctx.fillStyle = `rgba(255, 255, 255, ${bubble.opacity * 0.9})`;
+        this.ctx.beginPath();
+        this.ctx.arc(
+            bubble.x - bubble.radius * 0.35,
+            bubble.y - bubble.radius * 0.35,
+            bubble.radius * 0.25,
+            0,
+            Math.PI * 2
+        );
+        this.ctx.fill();
+    }
+}
 class SharkHotspotApp {
     constructor() {
         this.map = null;
@@ -392,5 +538,9 @@ class SharkHotspotApp {
 
 // Initialize the application when the DOM is loaded
 document.addEventListener('DOMContentLoaded', () => {
+    // Start water ripple animation
+    new WaterRippleAnimation();
+    
+    // Start main application
     new SharkHotspotApp();
 });

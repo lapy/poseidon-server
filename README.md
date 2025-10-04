@@ -73,11 +73,35 @@ Where:
 
 ### Prerequisites
 
-- Python 3.8+
-- Node.js (for development)
+- Python 3.8+ (for local development)
+- Docker & Docker Compose (for containerized deployment)
 - NASA Earthdata account (free registration required)
 
 ### Installation
+
+#### Option 1: Docker Deployment (Recommended)
+
+1. **Clone the repository**
+   ```bash
+   git clone <repository-url>
+   cd poseidon-server
+   ```
+
+2. **Set up environment variables**
+   ```bash
+   cp env.example .env
+   # Edit .env file with your NASA Earthdata credentials
+   ```
+
+3. **Build and run with Docker Compose**
+   ```bash
+   docker-compose up --build
+   ```
+
+4. **Access the application**
+   Open your browser and navigate to `http://localhost:8000`
+
+#### Option 2: Local Development
 
 1. **Clone the repository**
    ```bash
@@ -141,6 +165,95 @@ poseidon-server/
 ├── requirements.txt           # Python dependencies
 └── README.md                  # This file
 ```
+
+## 🐳 Docker Deployment
+
+### Quick Start with Docker
+
+The easiest way to run the application is using Docker Compose:
+
+```bash
+# Clone the repository
+git clone <repository-url>
+cd poseidon-server
+
+# Set up environment variables
+cp env.example .env
+# Edit .env with your NASA Earthdata credentials
+
+# Build and run
+docker-compose up --build
+
+# Access the application at http://localhost:8000
+```
+
+### Docker Commands
+
+```bash
+# Build the Docker image
+docker build -t poseidon-server .
+
+# Run the container
+docker run -p 8000:8000 --env-file .env poseidon-server
+
+# Run in background
+docker-compose up -d
+
+# View logs
+docker-compose logs -f
+
+# Stop the application
+docker-compose down
+
+# Rebuild and restart
+docker-compose up --build --force-recreate
+```
+
+### Environment Variables
+
+Create a `.env` file based on `env.example`:
+
+```bash
+# NASA Earthdata Authentication
+EARTHDATA_USERNAME=your_username_here
+EARTHDATA_PASSWORD=your_password_here
+
+# Server Configuration
+HOST=0.0.0.0
+PORT=8000
+DEBUG=False
+
+# Data Cache Configuration
+CACHE_DIR=data_cache
+GRID_RESOLUTION=0.25
+```
+
+### Data Persistence
+
+The Docker setup includes a volume for data caching to persist downloaded NASA data between container restarts:
+
+- **Volume**: `./data_cache:/app/data_cache`
+- **Purpose**: Caches NASA satellite data to avoid re-downloading
+- **Location**: Local `data_cache` directory
+
+### Health Checks
+
+The container includes health checks that monitor the application status:
+
+- **Endpoint**: `http://localhost:8000/health`
+- **Interval**: 30 seconds
+- **Timeout**: 10 seconds
+- **Retries**: 3 attempts
+
+### Production Considerations
+
+For production deployment:
+
+1. **Security**: Update CORS settings in `backend/main.py`
+2. **Environment**: Set `DEBUG=False` in your `.env` file
+3. **Resources**: Ensure sufficient memory for data processing
+4. **Monitoring**: Set up logging and monitoring for the container
+5. **Backup**: Regular backup of the `data_cache` volume
 
 ## 🔧 Configuration
 

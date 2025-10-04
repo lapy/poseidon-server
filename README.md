@@ -2,6 +2,24 @@
 
 A full-stack web application that predicts global shark foraging hotspots using NASA satellite data and a Habitat Suitability Index (HSI) model.
 
+## 🚀 NASA Space Apps Challenge 2025
+
+This project is part of the **2025 NASA Space Apps Challenge** - [**Sharks from Space**](https://www.spaceappschallenge.org/2025/challenges/sharks-from-space/?tab=details) challenge.
+
+### Challenge Connection
+- **Challenge Theme**: Sharks from Space
+- **NASA Mission**: Earth Science Division
+- **Data Sources**: NASA Earthdata Cloud (satellite observations)
+- **Objective**: Leverage satellite data to understand and predict shark behavior and habitat suitability
+
+### Project Alignment
+Our solution directly addresses the challenge by:
+- **Satellite Data Integration**: Using NASA's Earthdata Cloud for real-time oceanographic data
+- **Shark Habitat Modeling**: Implementing scientifically rigorous HSI calculations
+- **Global Coverage**: Providing worldwide shark foraging predictions
+- **Interactive Visualization**: Making complex data accessible through web interfaces
+- **Research Applications**: Supporting marine conservation and shark research efforts
+
 ## 🦈 Features
 
 - **NASA Satellite Data Integration**: Fetches and processes real-time data from NASA's Earthdata Cloud
@@ -10,6 +28,11 @@ A full-stack web application that predicts global shark foraging hotspots using 
 - **Species-Specific Predictions**: Supports Great White Shark and Tiger Shark profiles
 - **Data Caching**: Efficient local caching system to avoid redundant API calls
 - **Real-time Visualization**: Dynamic heatmap and polygon overlays
+- **Viewport Filtering**: Optional geographic filtering for faster processing of specific regions
+- **Trophic Lag Implementation**: Accounts for ecological response times in predictions
+- **Advanced Oceanographic Feature Detection**: Sophisticated eddy and front detection algorithms
+- **Missing Data Handling**: Intelligent gap-filling using adjacent time periods
+- **Interactive Map Controls**: Toggle between heatmap and polygon views, reset map view
 
 ## 🛠️ Technology Stack
 
@@ -39,14 +62,39 @@ The application uses three NASA satellite datasets with enhanced processing:
 ### 2. Sea Surface Height, Eddies, and Fronts
 - **Mission/Instrument**: Multi-mission (TOPEX/Poseidon, Jason series, Sentinel-6)
 - **Product**: NASA-SSH Simple Gridded Sea Surface Height from Standardized Reference Missions Only Version 1
-- **Short Name**: `NASA-SSH_SIMPLE_GRIDDED_SSH_V1`
-- **Details**: Provides Sea Surface Height Anomaly (SSHA) in meters on a 0.5° grid with 7-day temporal resolution. Large positive values represent warm-core anticyclonic eddies, negative values represent cold-core cyclonic eddies. Steep gradients indicate ocean fronts where prey concentrates. Uses 10 days of observations per grid with Gaussian weighted spatial averaging (100 km width). Data spans from Oct 1992 to present with basin-aware processing. Quality controlled using NASA flags (nasa_flag=0, median_filter_flag=0).
+- **Short Name**: `NASA_SSH_REF_SIMPLE_GRID_V1`
+- **Details**: Provides Sea Surface Height Anomaly (SSHA) in meters on a 0.5° grid with 7-day temporal resolution. This dataset is the primary source for detecting mesoscale oceanographic features:
+
+#### Eddy Detection:
+- **Cyclonic Eddies** (negative SLA): Cold-core eddies that create upwelling, bringing nutrient-rich deep water to the surface, promoting phytoplankton blooms and prey aggregation
+- **Anticyclonic Eddies** (positive SLA): Warm-core eddies that create downwelling, concentrating prey at depth and creating different foraging opportunities
+- **Eddy Size**: Typically 50-300 km in diameter, captured by the 0.5° grid resolution
+- **Optimal Strength**: Moderate SLA values (±0.1m) provide highest shark foraging suitability
+
+#### Front Detection:
+- **Ocean Fronts**: Sharp boundaries between different water masses identified by steep spatial gradients in SLA
+- **Gradient Calculation**: Computed as √(∂SLA/∂lat)² + (∂SLA/∂lon)² to identify convergence zones
+- **Front Suitability**: High gradients (>0.05 m/degree) indicate areas where prey concentrates
+- **Thermal Fronts**: Additional fronts detected through SST gradients
+
+#### Data Processing:
+- **Temporal Resolution**: 7-day intervals with 10-day observation windows for temporal overlap
+- **Spatial Averaging**: Gaussian weighted spatial averaging with 100 km width
+- **Basin-Aware Processing**: Avoids mixing data across distinct ocean basins (e.g., Caribbean vs Pacific)
+- **Quality Control**: NASA flags (nasa_flag=0, median_filter_flag=0) ensure data reliability
+- **Coverage**: Global coverage with some limitations in western hemisphere due to satellite tracks
 
 ### 3. Sea Surface Temperature (SST)
-- **Mission/Instrument**: Multi-mission blended product (VIIRS, MODIS)
-- **Product**: MUR (Multi-scale Ultra-high Resolution) Level-4 Global Foundation Sea Surface Temperature Analysis
-- **Short Name**: `MUR-JPL-L4-GLOB-v4.1`
-- **Details**: Gap-filled, cloud-free global SST data at ~1km resolution. Critical habitability filter for the model.
+- **Mission/Instrument**: VIIRS NPP
+- **Product**: VIIRS NPP Level-3 mapped Sea Surface Temperature (SST)
+- **Short Name**: `VIIRSN_L3m_SST3`
+- **Details**: Daily SST measurements using thermal infrared data at 750m resolution (at nadir). Provides high-resolution global coverage with quality-controlled temperature data for habitat suitability analysis.
+
+#### Data Processing Enhancements:
+- **Adjacent Temporal Merging**: Uses ±7 days of data to maximize coverage and fill gaps
+- **Quality Control**: Implements VIIRS quality flags (qual_sst ≤ 1) and fill value filtering
+- **Temperature Range Validation**: Filters unrealistic values (< -2°C or > 35°C)
+- **Unit Conversion**: Automatic conversion from Kelvin to Celsius when needed
 
 ## 🧮 HSI Model
 
@@ -63,19 +111,36 @@ Where:
 - `w_C`, `w_E`, `w_S`: Species-specific weights
 
 ### Enhanced Processing Features:
-- **Eddy Detection**: Identifies warm-core (positive SLA) and cold-core (negative SLA) eddies
-- **Front Detection**: Calculates spatial gradients to identify ocean fronts
+
+#### Oceanographic Feature Detection:
+- **Eddy Detection**: 
+  - Gaussian normalization: `f_eddy = exp(-E'²/(2σ²))` where σ = 0.1m
+  - Captures both cyclonic (upwelling) and anticyclonic (downwelling) eddies
+  - Optimal eddy strength provides highest shark foraging suitability
+- **Front Detection**: 
+  - Spatial gradient calculation: `|∇SLA| = √((∂SLA/∂lat)² + (∂SLA/∂lon)²)`
+  - Exponential front suitability: `f_front = exp(-|∇SLA|/σ_front)` where σ_front = 0.05 m/degree
+  - Identifies convergence zones where prey accumulates
+- **Combined Oceanographic Suitability**: 
+  - Weighted combination: `f_E = 0.6 × f_eddy + 0.4 × f_front`
+  - Eddies (60%) and fronts (40%) both contribute to prey concentration
+
+#### Advanced Data Processing:
 - **Trophic Lag Implementation**: Uses lagged environmental data to account for ecological response times
+- **Adjacent Temporal Merging**: Fetches data from ±7 days to maximize coverage and fill gaps
 - **Data Quality Control**: Handles fill values, outliers, and unit conversions
+- **Missing Data Handling**: Uses neutral sea level suitability (0.5) where data unavailable
 - **Spatial Regridding**: Aligns all datasets to a common 0.25° global grid
+- **Geographic Filtering**: Supports viewport-based processing for performance optimization
 
 ## 🚀 Quick Start
 
 ### Prerequisites
 
-- Python 3.8+
-- Node.js (for development)
+- Python 3.8+ (tested with Python 3.8, 3.9, 3.10, 3.11)
 - NASA Earthdata account (free registration required)
+- Internet connection for satellite data access
+- 2GB+ available disk space for data caching
 
 ### Installation
 
@@ -165,24 +230,28 @@ The application includes predefined profiles for two shark species:
 ### Data Sources
 - **Chlorophyll**: PACE OCI Level-3 Monthly Composite
 - **Sea Level**: NASA-SSH Simple Gridded Sea Surface Height L4 (7-day resolution, 0.5° grid, SSHA variable)
-- **Temperature**: MUR Level-4 Global Foundation Sea Surface Temperature
+- **Temperature**: VIIRS NPP Level-3 mapped SST (Daily resolution, 750m at nadir)
 
 ### API Endpoints
 
-- `GET /api/hotspots` - Get HSI predictions
+- `GET /api/hotspots` - Get HSI predictions with optional geographic filtering
 - `GET /api/species` - Get available shark species profiles
 - `GET /api/datasets` - Get NASA dataset information
 - `GET /health` - Health check
 - `POST /api/authenticate` - NASA Earthdata authentication
+- `POST /api/cleanup` - Clean up temporary files
+- `GET /api/sea-level-availability` - Check sea level data availability
 
 ## 🗺️ Usage
 
 1. **Select Species**: Choose from Great White Shark or Tiger Shark
 2. **Pick Date**: Select a target date for prediction
-3. **Adjust Threshold**: Set HSI threshold for visualization
-4. **Generate Prediction**: Click "Predict Hotspots" to run the model
-5. **Explore Results**: View the interactive map with hotspots
-6. **Toggle Views**: Switch between polygon and heatmap visualizations
+3. **Adjust Threshold**: Set HSI threshold for visualization (0.0-1.0)
+4. **Optional - Viewport Filtering**: Enable "Limit to Map View" to process only the visible map area for faster performance
+5. **Generate Prediction**: Click "Predict Hotspots" to run the model
+6. **Explore Results**: View the interactive map with hotspots
+7. **Toggle Views**: Switch between polygon and heatmap visualizations using map controls
+8. **View Details**: Click on hotspots to see detailed HSI values and coordinates
 
 ## 🔬 Model Parameters
 
@@ -196,12 +265,105 @@ The HSI model uses species-specific parameters that can be adjusted:
 
 ### Trophic Lag Implementation
 
-The model implements trophic lag to account for ecological response times:
+The model implements trophic lag to account for ecological response times in marine ecosystems. This is crucial for accurate habitat suitability predictions because:
 
-- **Temperature Lag**: Sharks respond to temperature changes with a delay (5-7 days)
-- **Chlorophyll Lag**: Food web effects propagate from phytoplankton to sharks (21-30 days)
-- **Sea Level Anomaly**: Current data used (immediate oceanographic response)
-- **Fallback**: If lagged data is unavailable, current data is used with warnings
+#### **Temperature Lag (5-7 days)**
+- **Physiological Response**: Sharks are ectothermic (cold-blooded) and respond to temperature changes through behavioral adaptations rather than immediate physiological changes
+- **Behavioral Migration**: Temperature changes trigger migration patterns as sharks seek optimal thermal habitats
+- **Metabolic Adjustment**: Changes in prey metabolism and distribution lag behind temperature changes
+- **Implementation**: Uses SST data from 5-7 days prior to the prediction date for Great White Sharks (7 days) and Tiger Sharks (5 days)
+
+#### **Chlorophyll Lag (21-30 days)**
+- **Food Web Dynamics**: Represents the time for bottom-up effects to propagate through the marine food web
+
+**Trophic Cascade Timeline:**
+```
+Day 0:    Phytoplankton bloom (chlorophyll increase)
+Day 3-7:  Zooplankton population growth
+Day 7-14: Small fish aggregation and feeding
+Day 14-21: Larger fish (shark prey) migration to area
+Day 21-30: Sharks arrive to exploit prey concentrations
+```
+
+- **Implementation**: Uses chlorophyll data from 21-30 days prior (Tiger Sharks: 21 days, Great White Sharks: 30 days)
+
+#### **Why Sea Level Anomaly Has No Lag**
+- **Immediate Physical Effect**: Ocean eddies and fronts create immediate changes in prey distribution
+- **Direct Impact**: Mesoscale features affect prey aggregation and shark foraging behavior within hours to days
+- **Current Data**: Sea level anomaly data is used from the prediction date itself
+
+#### **Mathematical Implementation**
+The lag system works by:
+
+```python
+# Calculate lagged dates for each species
+chlorophyll_lag_date = target_date - timedelta(days=profile.c_lag)
+temperature_lag_date = target_date - timedelta(days=profile.t_lag)
+
+# Fetch data from lagged dates with adjacent time periods
+lagged_chlorophyll_data = get_data_for_date_with_adjacent(chlorophyll_lag_date)
+lagged_sst_data = get_data_for_date_with_adjacent(temperature_lag_date)
+
+# Use lagged data in HSI calculation if available
+if lagged_chlorophyll_data is not None:
+    f_c = normalize_chlorophyll(lagged_chlorophyll_data['chlorophyll'])
+else:
+    f_c = normalize_chlorophyll(current_chlorophyll_data['chlorophyll'])
+```
+
+#### **Fallback Strategy**
+When lagged data is unavailable:
+- **Graceful Degradation**: Falls back to current date data
+- **Adjacent Time Merging**: Uses ±7 days of data around the lagged date to maximize coverage
+- **Quality Assurance**: Logs which data sources are being used for transparency
+- **Performance Optimization**: Caches both current and lagged data for efficient retrieval
+
+#### **Scientific Basis**
+This lag implementation is based on:
+- **Marine Ecology Research**: Studies on food web dynamics and predator-prey relationships
+- **Satellite Data Analysis**: Empirical observations of temporal correlations between environmental variables and marine life distribution
+- **Species-Specific Behavior**: Different shark species have varying response times based on their ecology and physiology
+- **Ecological Modeling**: Incorporates trophic cascade effects and bottom-up control mechanisms
+
+#### **NASA Challenge Significance**
+The trophic lag implementation demonstrates sophisticated use of satellite data for ecological modeling:
+- **Multi-temporal Analysis**: Leverages historical satellite data to predict future conditions
+- **Biological Realism**: Incorporates real ecological processes rather than simple correlation
+- **Species-Specific Adaptation**: Different lag times for different shark species reflect their unique ecology
+- **Predictive Power**: Enables forecasting of shark habitat suitability based on past environmental conditions
+
+## 📖 Additional Documentation
+
+- **[NASA_CHALLENGE_SUBMISSION.md](NASA_CHALLENGE_SUBMISSION.md)**: Complete NASA Space Apps Challenge 2025 submission details
+- **[OCEANOGRAPHIC_FEATURES.md](OCEANOGRAPHIC_FEATURES.md)**: Comprehensive guide to eddy and front detection
+- **API Documentation**: Available at `/api/datasets` endpoint
+- **Model Parameters**: Detailed in shark species profiles section above
+
+## 🏆 NASA Space Apps Challenge Submission
+
+### Project Overview
+This project demonstrates how NASA satellite data can be leveraged to understand and predict shark foraging behavior on a global scale. By combining multiple satellite datasets and implementing sophisticated oceanographic feature detection, we provide a comprehensive tool for marine conservation and research.
+
+### Key Innovations
+1. **Multi-Satellite Integration**: Combining PACE, VIIRS, and multi-mission altimetry data
+2. **Advanced Oceanographic Feature Detection**: Real-time eddy and front identification
+3. **Species-Specific Modeling**: Tailored HSI calculations for different shark species
+4. **Global Accessibility**: Web-based interface for researchers and conservationists worldwide
+
+### Impact and Applications
+- **Marine Conservation**: Identifying critical shark habitats for protection
+- **Fisheries Management**: Supporting sustainable fishing practices
+- **Climate Research**: Understanding shark response to oceanographic changes
+- **Public Education**: Making satellite data accessible to broader audiences
+
+### NASA Data Utilization
+Our project maximizes the use of NASA's Earth Science data by:
+- **Real-time Processing**: Live satellite data integration
+- **Multi-scale Analysis**: From mesoscale eddies to global patterns
+- **Quality Assurance**: Implementing NASA-recommended data processing standards
+- **Open Science**: Providing open-source tools for the research community
+
+For more information about the NASA Space Apps Challenge, visit: [https://www.spaceappschallenge.org/2025/challenges/sharks-from-space/](https://www.spaceappschallenge.org/2025/challenges/sharks-from-space/?tab=details)
 
 ## 📈 Performance
 
@@ -209,6 +371,10 @@ The model implements trophic lag to account for ecological response times:
 - **Grid Resolution**: 0.25° global grid for optimal balance of detail and performance
 - **Lazy Loading**: Data is fetched only when needed
 - **Efficient Visualization**: Optimized GeoJSON conversion for map rendering
+- **Viewport Filtering**: Optional geographic filtering to process only visible map areas
+- **Adjacent Temporal Merging**: Intelligent gap-filling using ±7 days of satellite data
+- **Memory Management**: Efficient handling of large satellite datasets with cleanup routines
+- **Progressive Loading**: Data is processed and displayed incrementally for better user experience
 
 ## 🛡️ Security
 
@@ -222,18 +388,31 @@ The model implements trophic lag to account for ecological response times:
 
 1. **Authentication Errors**
    - Ensure you have a valid NASA Earthdata account
-   - Run `earthaccess.login()` to authenticate
+   - Run `python -c "import earthaccess; earthaccess.login()"` to authenticate
    - Check your internet connection
+   - Verify credentials in `.netrc` file or environment variables
 
 2. **Data Not Found**
    - Some dates may not have available satellite data
    - Try dates within the last 2-3 years
-   - Check NASA data availability
+   - Check NASA data availability using `/api/sea-level-availability` endpoint
+   - Use adjacent time periods (±7 days) for better coverage
 
 3. **Performance Issues**
-   - Clear the data cache if needed
-   - Reduce grid resolution for faster processing
-   - Check available system memory
+   - Enable viewport filtering to process only visible map area
+   - Clear the data cache if needed: `rm -rf data_cache/*`
+   - Check available system memory (2GB+ recommended)
+   - Use the cleanup endpoint: `POST /api/cleanup`
+
+4. **Frontend Connection Issues**
+   - Ensure backend is running on `http://localhost:8000`
+   - Check browser console for CORS errors
+   - Verify API endpoints are accessible
+
+5. **Missing Sea Level Data**
+   - NASA-SSH has limited coverage in western hemisphere
+   - The system automatically uses adjacent time periods (±7 days) to fill gaps
+   - Neutral suitability (0.5) is used where data is unavailable
 
 ### Debug Mode
 
@@ -243,6 +422,13 @@ Enable debug logging by setting the log level:
 import logging
 logging.basicConfig(level=logging.DEBUG)
 ```
+
+### Data Cache Management
+
+- Cache directory: `data_cache/` (configurable via `CACHE_DIR` environment variable)
+- Cache files are automatically created and reused
+- Temporary files are cleaned up after processing
+- Use `POST /api/cleanup` to manually clean temporary files
 
 ## 🤝 Contributing
 

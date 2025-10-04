@@ -122,6 +122,39 @@ input[type="checkbox"] {
     margin-right: 0.5rem;
 }
 
+.performance-info {
+    margin-top: 1rem;
+    padding: 1rem;
+    background: #f8f9fa;
+    border-radius: 8px;
+    border-left: 4px solid #3498db;
+}
+
+.performance-stats {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.stat-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.25rem 0;
+}
+
+.stat-label {
+    font-weight: 600;
+    color: #2c3e50;
+    font-size: 0.9rem;
+}
+
+.stat-value {
+    color: #3498db;
+    font-weight: 500;
+    font-size: 0.9rem;
+}
+
 .predict-button {
     background: linear-gradient(135deg, #3498db, #2980b9);
     color: white;

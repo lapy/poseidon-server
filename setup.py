@@ -46,7 +46,7 @@ setup(
     },
     entry_points={
         "console_scripts": [
-            "shark-hotspot-server=backend.main:main",
+            "shark-hotspot-server=backend.main:app",
         ],
     },
     include_package_data=True,

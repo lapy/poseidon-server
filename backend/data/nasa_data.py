@@ -1,6 +1,12 @@
 """
 NASA Data Access Module using earthaccess
 Handles authentication, searching, and downloading of NASA datasets
+
+🚀 NASA Space Apps Challenge 2025 - Sharks from Space
+This module integrates NASA Earthdata Cloud for satellite-based shark habitat prediction.
+Demonstrates real-time satellite data processing for marine conservation applications.
+
+Challenge URL: https://www.spaceappschallenge.org/2025/challenges/sharks-from-space/
 """
 
 import earthaccess
@@ -39,13 +45,23 @@ class NASADataManager:
                 'short_name': 'NASA_SSH_REF_SIMPLE_GRID_V1',
                 'description': 'NASA SSH Simple Gridded Sea Surface Height from Standardized Reference Missions Only Version 1',
                 'variable': 'ssha',
-                'units': 'm'
+                'units': 'm',
+                'coverage_note': 'Limited coverage in western hemisphere due to satellite tracks and ocean basin separation logic',
+                'temporal_resolution': '7 days',
+                'spatial_resolution': '0.5 degrees',
+                'oceanographic_features': {
+                    'eddy_detection': 'Primary source for detecting mesoscale eddies (50-300 km)',
+                    'front_detection': 'Identifies ocean fronts through spatial gradient analysis',
+                    'data_quality': 'Basin-aware processing, quality flags (nasa_flag=0, median_filter_flag=0)',
+                    'satellite_mission': 'TOPEX/Poseidon, Jason series, Sentinel-6',
+                    'processing_method': '10-day observations with Gaussian weighted spatial averaging (100 km width)'
+                }
             },
             'sst': {
-                'short_name': 'MUR-JPL-L4-GLOB-v4.1',
-                'description': 'Multi-scale Ultra-high Resolution Level-4 Global Foundation Sea Surface Temperature',
-                'variable': 'analysed_sst',
-                'units': 'K'
+                'short_name': 'VIIRSN_L3m_SST3',
+                'description': 'VIIRS NPP Level-3 mapped Sea Surface Temperature (SST)',
+                'variable': 'sst_triple',
+                'units': '°C'
             }
         }
         
@@ -116,18 +132,18 @@ class NASADataManager:
     
     def _is_cached(self, dataset: str, date_str: str) -> bool:
         """Check if data is already cached"""
-        cache_path = self._get_cache_path(dataset, date_str)
+        cache_path = self.cache_dir / f"{dataset}_{date_str}.nc"
         return cache_path.exists()
     
     def _save_to_cache(self, data: xr.Dataset, dataset: str, date_str: str):
         """Save data to cache"""
-        cache_path = self._get_cache_path(dataset, date_str)
+        cache_path = self.cache_dir / f"{dataset}_{date_str}.nc"
         data.to_netcdf(cache_path)
         logger.info(f"Cached {dataset} data for {date_str}")
     
     def _load_from_cache(self, dataset: str, date_str: str) -> Optional[xr.Dataset]:
         """Load data from cache"""
-        cache_path = self._get_cache_path(dataset, date_str)
+        cache_path = self.cache_dir / f"{dataset}_{date_str}.nc"
         try:
             data = xr.open_dataset(cache_path, decode_timedelta=False)
             logger.info(f"Loaded {dataset} data from cache for {date_str}")
@@ -160,9 +176,9 @@ class NASADataManager:
                 search_params['cloud_hosted'] = True
                 logger.info("Added cloud_hosted=True for chlorophyll search")
             elif dataset == 'sst':
-                # MUR is a daily product, so we can be more specific
+                # VIIRS SST is a daily mapped product, so we can be more specific
                 search_params['cloud_hosted'] = True
-                logger.info("Added cloud_hosted=True for SST search")
+                logger.info("Added cloud_hosted=True for VIIRS SST search")
             elif dataset == 'sea_level':
                 # NASA-SSH L4 specific parameters
                 search_params['cloud_hosted'] = True
@@ -209,16 +225,23 @@ class NASADataManager:
             logger.error(f"Traceback: {traceback.format_exc()}")
             return []
     
-    def download_data(self, dataset: str, target_date: str) -> Optional[xr.Dataset]:
+    def download_data(self, dataset: str, target_date: str, geographic_bounds: Dict = None) -> Optional[xr.Dataset]:
         """Download and process data for a specific date"""
         date_str = target_date.replace('-', '')
         
         logger.info(f"Starting download for {dataset} on {target_date}")
         
-        # Check cache first
+        # Check cache first (by date only since datasets are global)
         if self._is_cached(dataset, date_str):
             logger.info(f"Using cached data for {dataset} on {target_date}")
-            return self._load_from_cache(dataset, date_str)
+            cached_data = self._load_from_cache(dataset, date_str)
+            
+            # Apply geographic filtering to cached data if bounds provided
+            if geographic_bounds and cached_data is not None:
+                cached_data = self._apply_geographic_filter(cached_data, geographic_bounds)
+                logger.info(f"Applied geographic filtering to cached {dataset} data")
+            
+            return cached_data
         
         try:
             # Search for data around the target date
@@ -275,8 +298,13 @@ class NASADataManager:
                         # Process and regrid the data
                         processed_data = self._process_data(data, dataset)
                         
-                        # Save to cache
+                        # Save to cache (by date only since datasets are global)
                         self._save_to_cache(processed_data, dataset, date_str)
+                        
+                        # Apply geographic filtering if bounds provided
+                        if geographic_bounds:
+                            processed_data = self._apply_geographic_filter(processed_data, geographic_bounds)
+                            logger.info(f"Applied geographic filtering to {dataset} data")
                         
                         return processed_data
                         
@@ -433,17 +461,21 @@ class NASADataManager:
             return data
     
     def _process_sst(self, data: xr.Dataset) -> xr.Dataset:
-        """Process MUR Level-4 Global Foundation Sea Surface Temperature data"""
+        """Process VIIRS NPP Level-3 mapped Sea Surface Temperature data"""
         try:
-            # MUR uses 'analysed_sst' as the primary variable
-            expected_var = 'analysed_sst'
+            logger.info(f"Processing VIIRS SST data. Available variables: {list(data.data_vars)}")
+            logger.info(f"Available coordinates: {list(data.coords)}")
+            logger.info(f"Dataset dimensions: {dict(data.dims)}")
+            
+            # VIIRS SST uses 'sst_triple' as the primary variable
+            expected_var = 'sst_triple'
             
             if expected_var in data.data_vars:
                 sst_var = expected_var
-                logger.info(f"Found MUR SST variable: {sst_var}")
+                logger.info(f"Found VIIRS SST variable: {sst_var}")
             else:
-                # Fallback to other possible variable names
-                sst_vars = ['analysed_sst', 'sst', 'sea_surface_temperature', 'sst_mean']
+                # Fallback to other possible variable names for VIIRS SST
+                sst_vars = ['sst_triple', 'sst', 'sst_11um', 'sst_4um', 'sea_surface_temperature', 'sst_mean']
                 sst_var = None
                 
                 for var in sst_vars:
@@ -452,18 +484,37 @@ class NASADataManager:
                         break
                 
                 if sst_var is None:
-                    logger.warning("SST variable not found, using first data variable")
+                    logger.warning(f"SST variable not found. Available variables: {list(data.data_vars)}")
+                    if not data.data_vars:
+                        logger.error("No data variables found in SST dataset!")
+                        return data
                     sst_var = list(data.data_vars)[0]
             
             # Extract SST data
             sst_data = data[sst_var]
             
-            # Handle fill values and invalid data
+            # Handle fill values and invalid data for VIIRS SST
+            # VIIRS SST typically uses -32767 as fill value
             if hasattr(sst_data, 'fill_value'):
                 sst_data = sst_data.where(sst_data != sst_data.fill_value)
+            else:
+                # Common VIIRS fill value
+                sst_data = sst_data.where(sst_data != -32767)
             
+            # Apply quality flags if available
+            if 'qual_sst' in data.data_vars:
+                # VIIRS quality flag: 0 = best quality, 1 = good quality, 2 = questionable, 3 = bad
+                good_quality = data['qual_sst'] <= 1
+                sst_data = sst_data.where(good_quality)
+                logger.info("Applied VIIRS SST quality flag filtering (qual_sst <= 1)")
+            elif 'l2_flags' in data.data_vars:
+                # Alternative quality flag format
+                good_quality = (data['l2_flags'] & 1) == 0  # Check if first bit is not set
+                sst_data = sst_data.where(good_quality)
+                logger.info("Applied VIIRS SST quality flag filtering using l2_flags")
+            
+            # VIIRS SST data is typically already in Celsius
             # Convert from Kelvin to Celsius if needed
-            # MUR data is typically in Kelvin, so convert to Celsius
             if sst_data.attrs.get('units', '').lower() in ['k', 'kelvin']:
                 sst_data = sst_data - 273.15
                 logger.info("Converted SST from Kelvin to Celsius")
@@ -478,17 +529,21 @@ class NASADataManager:
             
             # Add metadata
             processed.attrs.update({
-                'source': 'MUR Level-4 Global Foundation Sea Surface Temperature',
+                'source': 'VIIRS NPP Level-3 mapped Sea Surface Temperature',
                 'variable': sst_var,
                 'units': '°C',
-                'description': 'Multi-scale Ultra-high Resolution SST Analysis'
+                'description': 'VIIRS NPP Level-3 mapped SST',
+                'temporal_resolution': 'Daily',
+                'spatial_resolution': '750m (at nadir)',
+                'quality_control': 'VIIRS quality flags applied',
+                'instrument': 'VIIRS'
             })
             
             # Regrid to common grid
             return self._regrid_to_common_grid(processed, 'sst')
             
         except Exception as e:
-            logger.error(f"SST processing failed: {e}")
+            logger.error(f"VIIRS SST processing failed: {e}")
             return data
     
     def _regrid_to_common_grid(self, data: xr.Dataset, var_name: str) -> xr.Dataset:
@@ -533,15 +588,142 @@ class NASADataManager:
             logger.error(f"Regridding failed: {e}")
             return data
     
-    def get_data_for_date(self, target_date: str) -> Dict[str, Optional[xr.Dataset]]:
-        """Get all required datasets for a specific date"""
+    def get_data_for_date(self, target_date: str, geographic_bounds: Dict = None) -> Dict[str, Optional[xr.Dataset]]:
+        """Get all required datasets for a specific date with optional geographic filtering"""
         datasets = {}
         
         for dataset_name, config in self.datasets.items():
             logger.info(f"Fetching {config['description']} for {target_date}")
-            datasets[dataset_name] = self.download_data(dataset_name, target_date)
+            datasets[dataset_name] = self.download_data(dataset_name, target_date, geographic_bounds)
         
         return datasets
+    
+    def get_data_for_date_with_adjacent(self, target_date: str, geographic_bounds: Dict = None) -> Dict[str, Optional[xr.Dataset]]:
+        """
+        Get all required datasets for a specific date, including adjacent time periods for complete coverage.
+        This helps fill gaps in datasets like NASA-SSH that have limited coverage in certain regions.
+        """
+        from datetime import datetime, timedelta
+        
+        logger.info(f"Fetching data for {target_date} with adjacent time periods for complete coverage")
+        
+        # Define adjacent time periods (7 days before and after for NASA-SSH compatibility)
+        target_dt = datetime.strptime(target_date, '%Y-%m-%d')
+        dates_to_try = [
+            (target_dt - timedelta(days=7), "previous"),
+            (target_dt, "current"),
+            (target_dt + timedelta(days=7), "next")
+        ]
+        
+        # Collect all datasets
+        all_datasets = {}
+        for dataset_name in self.datasets.keys():
+            all_datasets[dataset_name] = []
+        
+        # Fetch data for each time period
+        for date_dt, period_name in dates_to_try:
+            date_str = date_dt.strftime('%Y-%m-%d')
+            logger.info(f"Fetching data for {period_name} period: {date_str}")
+            
+            for dataset_name, config in self.datasets.items():
+                data = self.download_data(dataset_name, date_str, geographic_bounds)
+                if data is not None:
+                    all_datasets[dataset_name].append(data)
+                    logger.info(f"  {dataset_name}: Successfully fetched {period_name} data")
+                else:
+                    logger.warning(f"  {dataset_name}: No data available for {period_name} period")
+        
+        # Merge datasets to fill gaps
+        merged_datasets = {}
+        for dataset_name, data_list in all_datasets.items():
+            if data_list:
+                merged_datasets[dataset_name] = self._merge_datasets(data_list, dataset_name)
+                logger.info(f"Merged {dataset_name} data from {len(data_list)} time periods")
+            else:
+                merged_datasets[dataset_name] = None
+                logger.warning(f"No data available for {dataset_name} from any time period")
+        
+        return merged_datasets
+    
+    def _merge_datasets(self, datasets: List[xr.Dataset], dataset_name: str) -> xr.Dataset:
+        """
+        Merge multiple datasets by filling gaps (NaN values) with data from other time periods.
+        Prioritizes data from the target date, then fills gaps with adjacent periods.
+        """
+        if len(datasets) == 1:
+            return datasets[0]
+        
+        logger.info(f"Merging {len(datasets)} {dataset_name} datasets to fill coverage gaps")
+        
+        # Start with the first dataset (should be the target date if available)
+        merged = datasets[0].copy()
+        
+        # Get the main data variable name
+        data_vars = list(merged.data_vars)
+        if not data_vars:
+            logger.warning(f"No data variables found in {dataset_name} dataset")
+            return merged
+        
+        main_var = data_vars[0]  # Use the first (and typically only) data variable
+        
+        # Fill gaps with data from other time periods
+        for i, dataset in enumerate(datasets[1:], 1):
+            if main_var in dataset.data_vars:
+                # Find where the merged dataset has NaN values
+                nan_mask = np.isnan(merged[main_var].values)
+                
+                # Fill NaN values with data from this dataset
+                merged_data = merged[main_var].values
+                current_data = dataset[main_var].values
+                
+                # Only fill where we have NaN and the current dataset has valid data
+                valid_mask = ~np.isnan(current_data)
+                fill_mask = nan_mask & valid_mask
+                
+                merged_data[fill_mask] = current_data[fill_mask]
+                merged[main_var].values = merged_data
+                
+                filled_count = np.sum(fill_mask)
+                if filled_count > 0:
+                    logger.info(f"  Filled {filled_count} gaps with data from period {i+1}")
+        
+        # Log final coverage statistics
+        total_points = merged[main_var].size
+        valid_points = np.sum(~np.isnan(merged[main_var].values))
+        coverage_percent = 100 * valid_points / total_points
+        logger.info(f"Final {dataset_name} coverage: {valid_points}/{total_points} points ({coverage_percent:.1f}%)")
+        
+        return merged
+    
+    
+    def _apply_geographic_filter(self, data: xr.Dataset, geographic_bounds: Dict) -> xr.Dataset:
+        """Apply geographic bounds to dataset"""
+        try:
+            if geographic_bounds is None:
+                return data
+            
+            # Apply latitude bounds
+            if 'lat' in data.coords:
+                lat_mask = (data['lat'] >= geographic_bounds['south']) & (data['lat'] <= geographic_bounds['north'])
+                data = data.where(lat_mask)
+                logger.debug(f"Applied latitude filter: {geographic_bounds['south']} to {geographic_bounds['north']}")
+            
+            # Apply longitude bounds (handle 0-360 vs -180-180)
+            if 'lon' in data.coords:
+                if geographic_bounds['west'] < geographic_bounds['east']:
+                    # Normal case: west < east
+                    lon_mask = (data['lon'] >= geographic_bounds['west']) & (data['lon'] <= geographic_bounds['east'])
+                else:
+                    # Crosses dateline: west > east
+                    lon_mask = (data['lon'] >= geographic_bounds['west']) | (data['lon'] <= geographic_bounds['east'])
+                data = data.where(lon_mask)
+                logger.debug(f"Applied longitude filter: {geographic_bounds['west']} to {geographic_bounds['east']}")
+            
+            return data
+            
+        except Exception as e:
+            logger.error(f"Geographic filtering failed: {e}")
+            return data
     
     def _cleanup_temp_file(self, file_path: str, max_retries: int = 3):
         """Clean up temporary file with retry logic"""

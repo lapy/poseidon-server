@@ -10,9 +10,11 @@ class SharkHotspotApp {
         this.heatmapLayer = null;
         this.currentData = null;
         this.isHeatmapMode = false;
+        this.viewportFilterEnabled = false;
+        this.viewportIndicator = null;
         
         // API configuration
-        this.apiBaseUrl = 'http://localhost:8000/api';
+        this.apiBaseUrl = window.location.origin + '/api';
         
         // Initialize the application
         this.init();
@@ -26,8 +28,16 @@ class SharkHotspotApp {
     }
     
     initializeMap() {
-        // Initialize Leaflet map
-        this.map = L.map('map').setView([20, 0], 2);
+        // Initialize Leaflet map with zoom constraints
+        this.map = L.map('map', {
+            minZoom: 2,  // Prevent zooming out beyond world view
+            maxZoom: 18, // Maximum zoom level
+            maxBounds: [
+                [-90, -180], // Southwest corner
+                [90, 180]    // Northeast corner
+            ],
+            maxBoundsViscosity: 1.0 // Keep bounds strict
+        }).setView([20, 0], 2);
         
         // Add base tile layer
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -87,6 +97,16 @@ class SharkHotspotApp {
         document.getElementById('reset-map').addEventListener('click', () => {
             this.resetMapView();
         });
+        
+        // Add viewport filter checkbox
+        document.getElementById('viewport-filter').addEventListener('change', (e) => {
+            this.viewportFilterEnabled = e.target.checked;
+            this.updateViewportIndicator();
+        });
+        
+        // Add map event listeners for viewport changes
+        this.map.on('zoomend', () => this.updateViewportIndicator());
+        this.map.on('moveend', () => this.updateViewportIndicator());
     }
     
     setDefaultDate() {
@@ -123,6 +143,26 @@ class SharkHotspotApp {
         button.disabled = !species || !date;
     }
     
+    getViewportBounds() {
+        if (!this.map) {
+            console.warn('Map not initialized, returning default bounds');
+            return {
+                north: 90,
+                south: -90,
+                east: 180,
+                west: -180
+            };
+        }
+        
+        const bounds = this.map.getBounds();
+        return {
+            north: bounds.getNorth(),
+            south: bounds.getSouth(),
+            east: bounds.getEast(),
+            west: bounds.getWest()
+        };
+    }
+    
     async predictHotspots() {
         const species = document.getElementById('shark-species').value;
         const date = document.getElementById('target-date').value;
@@ -133,10 +173,20 @@ class SharkHotspotApp {
         }
         
         this.showLoading(true);
-        this.showStatus('Processing NASA satellite data...', 'loading');
+        const statusMessage = this.viewportFilterEnabled ? 
+            'Processing NASA satellite data for current viewport...' : 
+            'Processing NASA satellite data...';
+        this.showStatus(statusMessage, 'loading');
         
         try {
-            const url = `${this.apiBaseUrl}/hotspots?target_date=${date}&shark_species=${species}&format=geojson`;
+            let url = `${this.apiBaseUrl}/hotspots?target_date=${date}&shark_species=${species}&format=geojson`;
+            
+            // Add viewport bounds if filtering is enabled
+            if (this.viewportFilterEnabled) {
+                const viewportBounds = this.getViewportBounds();
+                url += `&north=${viewportBounds.north}&south=${viewportBounds.south}&east=${viewportBounds.east}&west=${viewportBounds.west}`;
+            }
+            
             const response = await fetch(url);
             
             if (!response.ok) {
@@ -148,6 +198,7 @@ class SharkHotspotApp {
             
             this.updateVisualization();
             this.updateResultsPanel(data.metadata);
+            this.updatePerformanceInfo(data.metadata);
             
             this.showStatus('Prediction completed successfully!', 'success');
             
@@ -159,8 +210,81 @@ class SharkHotspotApp {
         }
     }
     
+    updateViewportIndicator() {
+        // Check if map is initialized
+        if (!this.map) {
+            console.warn('Map not initialized, skipping viewport indicator update');
+            return;
+        }
+        
+        // Remove existing indicator
+        if (this.viewportIndicator) {
+            this.map.removeLayer(this.viewportIndicator);
+            this.viewportIndicator = null;
+        }
+        
+        // Add new indicator if viewport filtering is enabled
+        if (this.viewportFilterEnabled) {
+            const bounds = this.getViewportBounds();
+            this.viewportIndicator = L.rectangle([[bounds.south, bounds.west], [bounds.north, bounds.east]], {
+                color: '#ff7800',
+                weight: 2,
+                fill: false,
+                dashArray: '5, 5',
+                opacity: 0.8
+            }).addTo(this.map);
+        }
+    }
+    
+    updatePerformanceInfo(metadata) {
+        const processingArea = metadata.processing_area || 'Global';
+        const geographicBounds = metadata.geographic_bounds;
+        const laggedDataAvailable = metadata.lagged_data_available;
+        
+        let performanceHtml = `
+            <div class="performance-stats">
+                <div class="stat-item">
+                    <span class="stat-label">Processing Area:</span>
+                    <span class="stat-value">${processingArea}</span>
+                </div>
+        `;
+        
+        if (geographicBounds) {
+            const area = Math.round((geographicBounds.north - geographicBounds.south) * 
+                                  (geographicBounds.east - geographicBounds.west));
+            performanceHtml += `
+                <div class="stat-item">
+                    <span class="stat-label">Viewport Area:</span>
+                    <span class="stat-value">${area}°²</span>
+                </div>
+            `;
+        }
+        
+        if (laggedDataAvailable) {
+            performanceHtml += `
+                <div class="stat-item">
+                    <span class="stat-label">Lagged Data:</span>
+                    <span class="stat-value">Chl: ${laggedDataAvailable.chlorophyll ? '✓' : '✗'}, SST: ${laggedDataAvailable.temperature ? '✓' : '✗'}</span>
+                </div>
+            `;
+        }
+        
+        performanceHtml += '</div>';
+        
+        // Update or create performance info element
+        let performanceElement = document.getElementById('performance-info');
+        if (!performanceElement) {
+            performanceElement = document.createElement('div');
+            performanceElement.id = 'performance-info';
+            performanceElement.className = 'performance-info';
+            document.querySelector('.results-panel').appendChild(performanceElement);
+        }
+        
+        performanceElement.innerHTML = performanceHtml;
+    }
+    
     updateVisualization() {
-        if (!this.currentData) return;
+        if (!this.currentData || !this.map) return;
         
         const threshold = parseFloat(document.getElementById('hsi-threshold').value);
         
@@ -182,6 +306,8 @@ class SharkHotspotApp {
     }
     
     updatePolygons(features) {
+        if (!this.map) return;
+        
         // Create polygon layer
         this.hsiLayer = L.geoJSON(features, {
             style: (feature) => ({
@@ -214,6 +340,8 @@ class SharkHotspotApp {
     }
     
     updateHeatmap(features) {
+        if (!this.map) return;
+        
         // Convert features to heatmap points
         const heatmapPoints = features.map(feature => [
             feature.properties.lat,
@@ -240,6 +368,8 @@ class SharkHotspotApp {
     }
     
     toggleHeatmap() {
+        if (!this.map) return;
+        
         this.isHeatmapMode = !this.isHeatmapMode;
         
         const button = document.getElementById('toggle-heatmap');
@@ -275,6 +405,8 @@ class SharkHotspotApp {
     }
     
     togglePolygons() {
+        if (!this.map) return;
+        
         this.isHeatmapMode = false;
         
         const button = document.getElementById('toggle-polygons');
@@ -295,6 +427,7 @@ class SharkHotspotApp {
     }
     
     resetMapView() {
+        if (!this.map) return;
         this.map.setView([20, 0], 2);
     }
     

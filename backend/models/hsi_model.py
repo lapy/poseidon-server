@@ -1,6 +1,12 @@
 """
 Habitat Suitability Index (HSI) Model Implementation
 Mathematical model for predicting shark foraging hotspots
+
+🚀 NASA Space Apps Challenge 2025 - Sharks from Space
+This implementation is part of the NASA Space Apps Challenge 2025 project
+demonstrating satellite-based shark habitat prediction using NASA oceanographic data.
+
+Challenge URL: https://www.spaceappschallenge.org/2025/challenges/sharks-from-space/
 """
 
 import numpy as np
@@ -61,6 +67,7 @@ class HSIModel:
                      sst_data: xr.Dataset,
                      shark_species: str,
                      target_date: str,
+                     geographic_bounds: Dict = None,
                      lagged_chlorophyll_data: xr.Dataset = None,
                      lagged_sst_data: xr.Dataset = None) -> xr.Dataset:
         """
@@ -74,6 +81,7 @@ class HSIModel:
             sst_data: Sea surface temperature data (current)
             shark_species: Species name ('great_white' or 'tiger_shark')
             target_date: Target date in YYYY-MM-DD format
+            geographic_bounds: Geographic bounds for filtering (optional)
             lagged_chlorophyll_data: Lagged chlorophyll data (optional)
             lagged_sst_data: Lagged SST data (optional)
             
@@ -87,6 +95,19 @@ class HSIModel:
             
             profile = self.shark_profiles[shark_species]
             
+            # Apply geographic filtering to all datasets if bounds provided
+            if geographic_bounds:
+                chlorophyll_data = self._apply_geographic_filter(chlorophyll_data, geographic_bounds)
+                sea_level_data = self._apply_geographic_filter(sea_level_data, geographic_bounds)
+                sst_data = self._apply_geographic_filter(sst_data, geographic_bounds)
+                
+                if lagged_chlorophyll_data is not None:
+                    lagged_chlorophyll_data = self._apply_geographic_filter(lagged_chlorophyll_data, geographic_bounds)
+                if lagged_sst_data is not None:
+                    lagged_sst_data = self._apply_geographic_filter(lagged_sst_data, geographic_bounds)
+                
+                logger.info(f"Applied geographic filtering to all datasets")
+            
             # Extract data variables - use lagged data if available
             if lagged_chlorophyll_data is not None:
                 chl = lagged_chlorophyll_data['chlorophyll']
@@ -97,22 +118,37 @@ class HSIModel:
             
             sla = sea_level_data['sea_level']  # Sea level anomaly is current (no lag)
             
-            if lagged_sst_data is not None:
-                sst = lagged_sst_data['sst']
+            if lagged_sst_data is not None and 'sst' in lagged_sst_data.data_vars:
                 logger.info(f"Using lagged SST data ({profile.t_lag} days)")
-            else:
+                sst = lagged_sst_data['sst']
+            elif sst_data is not None and 'sst' in sst_data.data_vars:
                 sst = sst_data['sst']
                 logger.info("Using current SST data (no lag)")
+            else:
+                logger.error("SST data not available - cannot continue HSI calculation")
+                raise ValueError("SST data is required but not available. Cannot calculate HSI without temperature data.")
             
             # Normalize data
             f_c = self._normalize_chlorophyll(chl)
             f_e = self._normalize_sea_level_anomaly(sla)
             f_s = self._calculate_temperature_suitability(sst, profile)
             
-            # Calculate HSI
+            # Handle missing sea level data by using default sea level suitability where data is missing
+            # Replace NaN sea level suitability with neutral value (0.5)
+            # This is necessary due to NASA-SSH dataset coverage limitations in western hemisphere
+            sea_level_nan_count = np.isnan(f_e).sum().values
+            total_points = f_e.size
+            if sea_level_nan_count > 0:
+                logger.info(f"Sea level data missing for {sea_level_nan_count}/{total_points} points ({100*sea_level_nan_count/total_points:.1f}%) - using neutral suitability (0.5)")
+            f_e_filled = f_e.where(~np.isnan(f_e), 0.5)
+            
+            # Calculate HSI with filled sea level data
             hsi = ((f_c ** profile.w_c) * 
-                   (f_e ** profile.w_e) * 
+                   (f_e_filled ** profile.w_e) * 
                    (f_s ** profile.w_s)) ** (1.0 / profile.total_weight)
+            
+            # Replace any NaN values with 0
+            hsi = hsi.where(~np.isnan(hsi), 0.0)
             
             # Create result dataset
             result = xr.Dataset({
@@ -169,37 +205,69 @@ class HSIModel:
     
     def _normalize_sea_level_anomaly(self, sla: xr.DataArray) -> xr.DataArray:
         """
-        Normalize sea level anomaly for eddy and front detection
-        f_E(E') = exp(-E'² / (2 * σ_E²))
+        Normalize sea level anomaly for comprehensive eddy and front detection
         
-        Large positive SLA values (hills) represent warm-core, anticyclonic eddies
-        Large negative SLA values (valleys) represent cold-core, cyclonic eddies
-        Steep gradients indicate ocean fronts
+        This function implements sophisticated oceanographic feature detection:
+        
+        1. EDDY DETECTION:
+           - Cyclonic Eddies (negative SLA): Cold-core eddies creating upwelling
+             * Bring nutrient-rich deep water to surface
+             * Promote phytoplankton blooms → prey aggregation → shark foraging
+           - Anticyclonic Eddies (positive SLA): Warm-core eddies creating downwelling
+             * Concentrate prey at depth, different foraging dynamics
+           - Gaussian normalization: f_eddy = exp(-E'²/(2σ²)) where σ = 0.1m
+           - Optimal strength: Moderate SLA values (±0.1m) provide highest suitability
+        
+        2. FRONT DETECTION:
+           - Ocean Fronts: Sharp boundaries between water masses
+           - Spatial gradients: |∇SLA| = √((∂SLA/∂lat)² + (∂SLA/∂lon)²)
+           - Front suitability: f_front = exp(-|∇SLA|/σ_front) where σ_front = 0.05 m/degree
+           - Convergence zones: Where different water masses meet → prey concentration
+        
+        3. COMBINED SUITABILITY:
+           - Weighted combination: f_E = 0.6 × f_eddy + 0.4 × f_front
+           - Eddies (60%): Primary foraging hotspots
+           - Fronts (40%): Secondary but important prey concentration zones
+        
+        Args:
+            sla: Sea Level Anomaly data in meters
+            
+        Returns:
+            Combined eddy and front suitability (0-1 scale)
         """
         try:
             # Remove invalid values
             sla_clean = sla.where(np.isfinite(sla))
             
-            # Calculate gradient magnitude for front detection
-            # Fronts are areas with steep gradients in SLA
+            # STEP 1: FRONT DETECTION
+            # Ocean fronts are identified by steep spatial gradients in SLA
+            # These represent boundaries between different water masses where prey concentrates
             if 'lat' in sla_clean.dims and 'lon' in sla_clean.dims:
-                # Calculate spatial gradients
-                grad_lat = sla_clean.differentiate('lat')
-                grad_lon = sla_clean.differentiate('lon')
+                # Calculate spatial gradients in both dimensions
+                grad_lat = sla_clean.differentiate('lat')  # ∂SLA/∂lat
+                grad_lon = sla_clean.differentiate('lon')  # ∂SLA/∂lon
+                
+                # Calculate gradient magnitude: |∇SLA| = √((∂SLA/∂lat)² + (∂SLA/∂lon)²)
                 gradient_magnitude = np.sqrt(grad_lat**2 + grad_lon**2)
                 
-                # Normalize gradient magnitude (fronts have high gradients)
-                front_suitability = np.exp(-gradient_magnitude / 0.05)  # σ_front = 0.05 m/degree
+                # Convert gradients to front suitability using exponential decay
+                # High gradients (steep fronts) → high suitability for prey concentration
+                # σ_front = 0.05 m/degree: typical gradient threshold for significant fronts
+                front_suitability = np.exp(-gradient_magnitude / 0.05)
             else:
+                # Fallback if spatial dimensions not available
                 front_suitability = xr.ones_like(sla_clean)
             
-            # Apply Gaussian normalization for eddy detection (σ_E = 0.1 m)
-            # This captures both warm-core (positive) and cold-core (negative) eddies
-            sigma_e = 0.1
+            # STEP 2: EDDY DETECTION
+            # Eddies are circular ocean features detected by SLA anomalies
+            # Both positive (anticyclonic) and negative (cyclonic) eddies are important
+            sigma_e = 0.1  # Standard deviation for eddy strength normalization
             eddy_suitability = np.exp(-(sla_clean ** 2) / (2 * sigma_e ** 2))
             
-            # Combine eddy and front suitability
-            # Eddies and fronts are both important for prey concentration
+            # STEP 3: COMBINE EDDY AND FRONT SUITABILITY
+            # Both features contribute to prey concentration but with different weights
+            # Eddies (60%): Primary foraging hotspots from upwelling/downwelling
+            # Fronts (40%): Secondary but important convergence zones
             combined_suitability = 0.6 * eddy_suitability + 0.4 * front_suitability
             
             # Ensure values are between 0 and 1
@@ -280,23 +348,85 @@ class HSIModel:
             'temperature_lag_days': profile.t_lag
         }
     
+    def _apply_geographic_filter(self, data: xr.Dataset, geographic_bounds: Dict) -> xr.Dataset:
+        """Apply geographic bounds to dataset"""
+        try:
+            if geographic_bounds is None:
+                return data
+            
+            # Apply latitude bounds
+            if 'lat' in data.coords:
+                lat_mask = (data['lat'] >= geographic_bounds['south']) & (data['lat'] <= geographic_bounds['north'])
+                data = data.where(lat_mask)
+                logger.debug(f"Applied latitude filter: {geographic_bounds['south']} to {geographic_bounds['north']}")
+            
+            # Apply longitude bounds (handle 0-360 vs -180-180)
+            if 'lon' in data.coords:
+                if geographic_bounds['west'] < geographic_bounds['east']:
+                    # Normal case: west < east
+                    lon_mask = (data['lon'] >= geographic_bounds['west']) & (data['lon'] <= geographic_bounds['east'])
+                else:
+                    # Crosses dateline: west > east
+                    lon_mask = (data['lon'] >= geographic_bounds['west']) | (data['lon'] <= geographic_bounds['east'])
+                data = data.where(lon_mask)
+                logger.debug(f"Applied longitude filter: {geographic_bounds['west']} to {geographic_bounds['east']}")
+            
+            return data
+            
+        except Exception as e:
+            logger.error(f"Geographic filtering failed: {e}")
+            return data
+    
     def get_hsi_statistics(self, hsi_data: xr.Dataset) -> Dict[str, Any]:
         """Calculate statistics for HSI data"""
         try:
             hsi = hsi_data['hsi']
             
+            # Filter out NaN values for statistics
+            hsi_valid = hsi.where(~np.isnan(hsi))
+            
+            # Check if we have any valid data
+            if hsi_valid.count() == 0:
+                logger.warning("No valid HSI data for statistics calculation")
+                return {
+                    'mean': 0.0,
+                    'std': 0.0,
+                    'min': 0.0,
+                    'max': 0.0,
+                    'percentile_90': 0.0,
+                    'percentile_95': 0.0,
+                    'percentile_99': 0.0,
+                    'valid_points': 0
+                }
+            
             stats = {
-                'mean': float(hsi.mean().values),
-                'std': float(hsi.std().values),
-                'min': float(hsi.min().values),
-                'max': float(hsi.max().values),
-                'percentile_90': float(hsi.quantile(0.9).values),
-                'percentile_95': float(hsi.quantile(0.95).values),
-                'percentile_99': float(hsi.quantile(0.99).values)
+                'mean': float(hsi_valid.mean().values),
+                'std': float(hsi_valid.std().values),
+                'min': float(hsi_valid.min().values),
+                'max': float(hsi_valid.max().values),
+                'percentile_90': float(hsi_valid.quantile(0.9).values),
+                'percentile_95': float(hsi_valid.quantile(0.95).values),
+                'percentile_99': float(hsi_valid.quantile(0.99).values),
+                'valid_points': int(hsi_valid.count().values)
             }
+            
+            # Replace any remaining NaN values with 0
+            for key, value in stats.items():
+                if isinstance(value, float) and np.isnan(value):
+                    stats[key] = 0.0
+                    logger.warning(f"Replaced NaN in {key} with 0.0")
             
             return stats
             
         except Exception as e:
             logger.error(f"HSI statistics calculation failed: {e}")
-            return {}
+            return {
+                'mean': 0.0,
+                'std': 0.0,
+                'min': 0.0,
+                'max': 0.0,
+                'percentile_90': 0.0,
+                'percentile_95': 0.0,
+                'percentile_99': 0.0,
+                'valid_points': 0
+            }

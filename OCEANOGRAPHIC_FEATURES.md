@@ -43,14 +43,13 @@ Ocean eddies are circular currents of water that can span 50-300 kilometers in d
 
 ### Mathematical Implementation
 
-```python
-# Eddy suitability calculation
-f_eddy = exp(-E'²/(2σ²))
+```math
+f_{eddy} = \exp\left(-\frac{E'^2}{2\sigma^2}\right)
+```
 
 Where:
-- E' = Sea Level Anomaly (m)
-- σ = 0.1 m (standard deviation for optimal eddy strength)
-```
+- `mathE'` = Sea Level Anomaly (m)
+- `math\sigma = 0.1` m (standard deviation for optimal eddy strength)
 
 **Key Parameters:**
 - **Optimal Strength**: Moderate SLA values (±0.1m) provide highest suitability
@@ -72,7 +71,7 @@ Ocean fronts are sharp boundaries between different water masses characterized b
 
 #### 1. Dynamic Fronts (SSH Gradients)
 - **Detection Method**: Spatial gradient analysis of Sea Level Anomaly
-- **Formula**: `|∇SLA| = √((∂SLA/∂lat)² + (∂SLA/∂lon)²)`
+- **Formula**: `math|\nabla SLA| = \sqrt{\left(\frac{\partial SLA}{\partial lat}\right)^2 + \left(\frac{\partial SLA}{\partial lon}\right)^2}`
 - **Characteristics**: Sharp boundaries between different water masses
 - **Ecological Role**: Convergence zones where prey concentrates
 
@@ -83,14 +82,13 @@ Ocean fronts are sharp boundaries between different water masses characterized b
 
 ### Mathematical Implementation
 
-```python
-# Front suitability calculation
-f_front = exp(-|∇SLA|/σ_front)
+```math
+f_{front} = \exp\left(-\frac{|\nabla SLA|}{\sigma_{front}}\right)
+```
 
 Where:
-- |∇SLA| = Gradient magnitude (m/degree)
-- σ_front = 0.05 m/degree (threshold for significant fronts)
-```
+- `math|\nabla SLA|` = Gradient magnitude (m/degree)
+- `math\sigma_{front} = 0.05` m/degree (threshold for significant fronts)
 
 **Key Parameters:**
 - **Gradient Threshold**: >0.05 m/degree indicates significant fronts
@@ -101,14 +99,14 @@ Where:
 
 ### Integration Formula
 
-```python
-f_E = 0.6 × f_eddy + 0.4 × f_front
+```math
+f_E = 0.6 \times f_{eddy} + 0.4 \times f_{front}
+```
 
 Where:
-- f_eddy = Eddy suitability (0-1 scale)
-- f_front = Front suitability (0-1 scale)
-- f_E = Combined oceanographic suitability
-```
+- `mathf_{eddy}` = Eddy suitability (0-1 scale)
+- `mathf_{front}` = Front suitability (0-1 scale)
+- `mathf_E` = Combined oceanographic suitability
 
 ### Weighting Rationale
 

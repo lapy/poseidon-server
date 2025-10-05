@@ -2,6 +2,7 @@
 
 ## Project Submission
 
+**Project Name**: POSEIDON (Predictive Oceanographic Shark Ecology & In-situ Data Observation Network)  
 **Challenge**: [Sharks from Space](https://www.spaceappschallenge.org/2025/challenges/sharks-from-space/?tab=details)  
 **Year**: 2025  
 **Theme**: Sharks from Space  
@@ -10,7 +11,7 @@
 ## 🎯 Challenge Alignment
 
 ### Project Overview
-Our **Shark Foraging Hotspot Prediction Server** directly addresses the "Sharks from Space" challenge by demonstrating how NASA satellite data can be leveraged to understand and predict shark foraging behavior on a global scale.
+**POSEIDON** (Predictive Oceanographic Shark Ecology & In-situ Data Observation Network) is a full-stack shark foraging hotspot prediction server that directly addresses the "Sharks from Space" challenge by demonstrating how NASA satellite data can be leveraged to understand and predict shark foraging behavior on a global scale.
 
 ### Key Challenge Requirements Met
 

@@ -1,4 +1,6 @@
-# Shark Foraging Hotspot Prediction Server
+# POSEIDON: Shark Foraging Hotspot Prediction Server
+
+**P**redictive **O**ceanographic **S**hark **E**cology & **I**n-situ **D**ata **O**bservation **N**etwork
 
 A full-stack web application that predicts global shark foraging hotspots using NASA satellite data and a Habitat Suitability Index (HSI) model.
 

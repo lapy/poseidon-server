@@ -1,0 +1,59 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Data cache files (these can be large)
+data_cache/
+backend/data_cache/
+*.nc
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Documentation (not needed in container)
+NASA_CHALLENGE_SUBMISSION.md
+OCEANOGRAPHIC_FEATURES.md
+RESOURCES.md
+
+# Environment files (sensitive data)
+.env
+.env.local
+.env.*.local
+.netrc
+
+# Logs
+*.log
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Temporary files
+*.tmp
+temp/
+tmp/
+

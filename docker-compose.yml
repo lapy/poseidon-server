@@ -1,0 +1,30 @@
+version: '3.8'
+
+services:
+  poseidon-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: poseidon-server
+    ports:
+      - "8000:8000"
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8000
+      - DEBUG=False
+      # NASA Earthdata credentials (set these in .env file or here)
+      - EARTHDATA_USERNAME=${EARTHDATA_USERNAME}
+      - EARTHDATA_PASSWORD=${EARTHDATA_PASSWORD}
+    volumes:
+      # Mount data cache directory to persist downloaded satellite data
+      - ./data_cache:/app/data_cache
+      # Optional: mount .netrc for NASA authentication
+      # - ~/.netrc:/root/.netrc:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+

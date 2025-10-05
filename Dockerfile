@@ -29,11 +29,12 @@ FROM python:3.11-slim
 WORKDIR /app
 
 # Install runtime system dependencies
+# Using -dev packages for guaranteed compatibility (adds ~50MB but ensures it works)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libhdf5-103 \
-    libnetcdf19 \
-    libproj25 \
-    libgeos-c1v5 \
+    libhdf5-dev \
+    libnetcdf-dev \
+    libproj-dev \
+    libgeos-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy Python packages from builder

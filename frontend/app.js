@@ -13,6 +13,13 @@ class SharkHotspotApp {
         this.viewportFilterEnabled = false;
         this.viewportIndicator = null;
         
+        // Overlay layers
+        this.overlayLayers = {
+            chlorophyll: null,
+            oceanographic: null,
+            salinity: null
+        };
+        
         // API configuration
         this.apiBaseUrl = window.location.origin + '/api';
         
@@ -25,6 +32,11 @@ class SharkHotspotApp {
         this.setupEventListeners();
         this.setDefaultDate();
         this.loadSharkSpecies();
+        
+        // Setup overlay listeners after DOM is ready
+        setTimeout(() => {
+            this.setupOverlayListeners();
+        }, 100);
     }
     
     initializeMap() {
@@ -103,6 +115,8 @@ class SharkHotspotApp {
             this.viewportFilterEnabled = e.target.checked;
             this.updateViewportIndicator();
         });
+        
+        // Overlay listeners will be set up after DOM is ready
         
         // Add map event listeners for viewport changes
         this.map.on('zoomend', () => this.updateViewportIndicator());
@@ -236,6 +250,219 @@ class SharkHotspotApp {
         }
     }
     
+    toggleOverlay(type, enabled) {
+        console.log(`Toggling ${type} overlay: ${enabled}`);
+        console.log('Current data available:', !!this.currentData);
+        
+        // Remove existing layer if it exists
+        if (this.overlayLayers[type]) {
+            this.map.removeLayer(this.overlayLayers[type]);
+            this.overlayLayers[type] = null;
+            console.log(`Removed existing ${type} overlay`);
+        }
+        
+        if (enabled && this.currentData) {
+            console.log(`Adding ${type} overlay layer`);
+            this.addOverlayLayer(type);
+        } else if (enabled && !this.currentData) {
+            console.log('Cannot add overlay - no data available. Run a prediction first.');
+        }
+        
+        // Update overlay legend visibility
+        this.updateOverlayLegend();
+    }
+    
+    setupOverlayListeners() {
+        // Add overlay toggle event listeners with error handling
+        try {
+            const chlorophyllOverlay = document.getElementById('chlorophyll-overlay');
+            const oceanographicOverlay = document.getElementById('oceanographic-overlay');
+            const salinityOverlay = document.getElementById('salinity-overlay');
+            
+            if (chlorophyllOverlay) {
+                chlorophyllOverlay.addEventListener('change', (e) => {
+                    this.toggleOverlay('chlorophyll', e.target.checked);
+                });
+            } else {
+                console.warn('Chlorophyll overlay element not found');
+            }
+            
+            if (oceanographicOverlay) {
+                oceanographicOverlay.addEventListener('change', (e) => {
+                    this.toggleOverlay('oceanographic', e.target.checked);
+                });
+            } else {
+                console.warn('Oceanographic overlay element not found');
+            }
+            
+            if (salinityOverlay) {
+                salinityOverlay.addEventListener('change', (e) => {
+                    this.toggleOverlay('salinity', e.target.checked);
+                });
+            } else {
+                console.warn('Salinity overlay element not found');
+            }
+            
+            console.log('Overlay listeners setup complete');
+        } catch (error) {
+            console.error('Error setting up overlay listeners:', error);
+        }
+    }
+    
+    updateOverlayLegend() {
+        const overlayLegend = document.getElementById('overlay-legend');
+        const hasActiveOverlays = Object.values(this.overlayLayers).some(layer => layer !== null);
+        
+        if (hasActiveOverlays) {
+            overlayLegend.style.display = 'block';
+        } else {
+            overlayLegend.style.display = 'none';
+        }
+    }
+    
+    async addOverlayLayer(type) {
+        if (!this.currentData || !this.currentData.metadata) {
+            console.warn('No prediction data available for overlay date');
+            return;
+        }
+        
+        try {
+            console.log(`Fetching ${type} overlay data...`);
+            
+            // Get the target date from current prediction
+            const targetDate = this.currentData.metadata.target_date;
+            
+            // Build API URL with density reduction
+            const densityFactor = 6; // Higher = less dense overlays
+            const url = `${this.apiBaseUrl}/overlay/${type}?target_date=${targetDate}&density_factor=${densityFactor}`;
+            console.log(`Fetching overlay data from: ${url}`);
+            
+            const response = await fetch(url);
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            
+            const overlayData = await response.json();
+            console.log(`Received ${type} overlay data with ${overlayData.features.length} features`);
+            
+            // Create overlay layer
+            let layer = null;
+            switch (type) {
+                case 'chlorophyll':
+                    layer = this.createChlorophyllOverlay(overlayData);
+                    break;
+                case 'oceanographic':
+                    layer = this.createOceanographicOverlay(overlayData);
+                    break;
+                case 'salinity':
+                    layer = this.createSalinityOverlay(overlayData);
+                    break;
+            }
+            
+            if (layer) {
+                this.overlayLayers[type] = layer.addTo(this.map);
+                console.log(`Added ${type} overlay layer to map`);
+                console.log(`Map layers count:`, Object.keys(this.map._layers).length);
+            }
+            
+        } catch (error) {
+            console.error(`Failed to load ${type} overlay:`, error);
+            this.showStatus(`Failed to load ${type} overlay data`, 'error');
+        }
+    }
+    
+    createChlorophyllOverlay(data) {
+        console.log('Creating chlorophyll overlay with raw data');
+        
+        return L.geoJSON(data, {
+            style: (feature) => {
+                const value = feature.properties.chlorophyll || 0;
+                // Normalize chlorophyll values (typically 0-10 mg/m³)
+                const normalized = Math.min(value / 5.0, 1.0); // Scale to 0-1 range
+                
+                return {
+                    fillColor: '#228B22',
+                    fillOpacity: Math.max(normalized * 0.8, 0.2),
+                    color: '#228B22',
+                    weight: 1,
+                    opacity: 0.6
+                };
+            },
+            onEachFeature: (feature, layer) => {
+                const value = feature.properties.chlorophyll || 0;
+                const popup = `
+                    <h3>Chlorophyll Concentration</h3>
+                    <p><strong>Value:</strong> ${value.toFixed(3)} mg/m³</p>
+                    <p><strong>Latitude:</strong> ${feature.properties.lat.toFixed(2)}°</p>
+                    <p><strong>Longitude:</strong> ${feature.properties.lon.toFixed(2)}°</p>
+                `;
+                layer.bindPopup(popup);
+            }
+        });
+    }
+    
+    createOceanographicOverlay(data) {
+        console.log('Creating oceanographic overlay with processed eddy/front data');
+        
+        return L.geoJSON(data, {
+            style: (feature) => {
+                const value = feature.properties.oceanographic || 0;
+                // Value is already normalized (0-1) from HSI processing
+                const normalized = Math.min(Math.max(value, 0), 1);
+                
+                return {
+                    fillColor: '#0064C8',
+                    fillOpacity: Math.max(normalized * 0.8, 0.2),
+                    color: '#0064C8',
+                    weight: 1,
+                    opacity: 0.6
+                };
+            },
+            onEachFeature: (feature, layer) => {
+                const value = feature.properties.oceanographic || 0;
+                const popup = `
+                    <h3>Oceanographic Features</h3>
+                    <p><strong>Eddy/Front Suitability:</strong> ${(value * 100).toFixed(1)}%</p>
+                    <p><strong>Combined Score:</strong> ${value.toFixed(3)} (0-1 scale)</p>
+                    <p><strong>Features:</strong> Eddies (60%) + Fronts (40%)</p>
+                    <p><strong>Latitude:</strong> ${feature.properties.lat.toFixed(2)}°</p>
+                    <p><strong>Longitude:</strong> ${feature.properties.lon.toFixed(2)}°</p>
+                `;
+                layer.bindPopup(popup);
+            }
+        });
+    }
+    
+    createSalinityOverlay(data) {
+        console.log('Creating salinity overlay with raw data');
+        
+        return L.geoJSON(data, {
+            style: (feature) => {
+                const value = feature.properties.salinity || 0; // Sea Surface Salinity
+                // Normalize salinity values (typically 30-37 psu)
+                const normalized = Math.min((value - 30) / 7.0, 1.0); // Scale to 0-1 range
+                
+                return {
+                    fillColor: '#008080',
+                    fillOpacity: Math.max(normalized * 0.8, 0.2),
+                    color: '#008080',
+                    weight: 1,
+                    opacity: 0.6
+                };
+            },
+            onEachFeature: (feature, layer) => {
+                const value = feature.properties.salinity || 0;
+                const popup = `
+                    <h3>Sea Surface Salinity</h3>
+                    <p><strong>Value:</strong> ${value.toFixed(2)} psu</p>
+                    <p><strong>Latitude:</strong> ${feature.properties.lat.toFixed(2)}°</p>
+                    <p><strong>Longitude:</strong> ${feature.properties.lon.toFixed(2)}°</p>
+                `;
+                layer.bindPopup(popup);
+            }
+        });
+    }
+    
     updatePerformanceInfo(metadata) {
         const processingArea = metadata.processing_area || 'Global';
         const geographicBounds = metadata.geographic_bounds;
@@ -302,6 +529,32 @@ class SharkHotspotApp {
             this.updateHeatmap(filteredFeatures);
         } else {
             this.updatePolygons(filteredFeatures);
+        }
+        
+        // Update overlays if they are enabled
+        this.updateEnabledOverlays();
+    }
+    
+    updateEnabledOverlays() {
+        // Check which overlays are enabled and update them
+        const chlorophyllEnabled = document.getElementById('chlorophyll-overlay').checked;
+        const oceanographicEnabled = document.getElementById('oceanographic-overlay').checked;
+        const salinityEnabled = document.getElementById('salinity-overlay').checked;
+        
+        // Update each overlay if it's enabled
+        if (chlorophyllEnabled && this.overlayLayers.chlorophyll) {
+            this.map.removeLayer(this.overlayLayers.chlorophyll);
+            this.addOverlayLayer('chlorophyll');
+        }
+        
+        if (oceanographicEnabled && this.overlayLayers.oceanographic) {
+            this.map.removeLayer(this.overlayLayers.oceanographic);
+            this.addOverlayLayer('oceanographic');
+        }
+        
+        if (salinityEnabled && this.overlayLayers.salinity) {
+            this.map.removeLayer(this.overlayLayers.salinity);
+            this.addOverlayLayer('salinity');
         }
     }
     

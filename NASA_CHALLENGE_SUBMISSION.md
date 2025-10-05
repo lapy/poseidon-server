@@ -43,9 +43,11 @@ Our **Shark Foraging Hotspot Prediction Server** directly addresses the "Sharks 
 - **Usage**: Food web foundation for shark prey availability
 
 ### 2. NASA-SSH Sea Level Anomaly Data
-- **Missions**: TOPEX/Poseidon, Jason series, Sentinel-6
-- **Product**: NASA SSH Simple Gridded Sea Surface Height
+- **Missions**: TOPEX/Poseidon, Jason series, Sentinel-6 Michael Freilich
+- **Product**: NASA SSH Simple Gridded Sea Surface Height L4 (NASA_SSH_REF_SIMPLE_GRID_V1)
+- **Processing**: Quality flags, orbit error reduction, coordinate standardization
 - **Usage**: Detection of ocean eddies and fronts that concentrate prey
+- **Coverage**: Full global coverage with automatic 0-360° to -180/180° longitude conversion
 
 ### 3. VIIRS Sea Surface Temperature
 - **Mission**: VIIRS NPP
@@ -183,7 +185,3 @@ This project demonstrates the power of combining:
 - **Marine Biology**: Species-specific habitat requirements
 - **Web Development**: Accessible data visualization
 - **Open Science**: Transparent, reproducible research
-
----
-
-*This submission represents a comprehensive solution to the NASA Space Apps Challenge 2025 "Sharks from Space" challenge, demonstrating innovative use of NASA satellite data for marine conservation and research applications.*

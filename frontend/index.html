@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Shark Foraging Hotspot Prediction</title>
+    <title>Project Poseidon - Predictive Oceanographic Shark Ecology & In-situ Data Observation Network</title>
     
     <!-- Leaflet CSS -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
@@ -19,8 +19,8 @@
         <!-- Header -->
         <header class="header">
             <div class="container">
-                <h1><i class="fas fa-fish"></i> Shark Foraging Hotspot Prediction</h1>
-                <p>Predict global shark foraging hotspots using NASA satellite data</p>
+                <h1><i class="fas fa-fish"></i> Project Poseidon</h1>
+                <p>Predictive Oceanographic Shark Ecology & In-situ Data Observation Network</p>
             </div>
         </header>
 
@@ -35,9 +35,8 @@
                             Shark Species
                         </label>
                         <select id="shark-species" class="control-input">
-                            <option value="">Select a species...</option>
+                            <option value="tiger_shark" selected>Tiger Shark</option>
                             <option value="great_white">Great White Shark</option>
-                            <option value="tiger_shark">Tiger Shark</option>
                             <option value="bull_shark">Bull Shark</option>
                         </select>
                     </div>
@@ -71,14 +70,14 @@
                    
 
 
-                    <button id="predict-button" class="predict-button" disabled>
+                    <button id="predict-button" class="predict-button">
                         <i class="fas fa-search"></i>
                         Predict Hotspots
                     </button>
 
                     <div class="status-indicator" id="status-indicator">
                         <i class="fas fa-info-circle"></i>
-                        <span>Select species and date to begin</span>
+                        <span>Ready to predict hotspots</span>
                     </div>
                 </div>
 
@@ -199,7 +198,7 @@
         <!-- Footer -->
         <footer class="footer">
             <div class="container">
-                <p>&copy; 2025 Shark Foraging Hotspot Prediction. Powered by NASA satellite data.</p>
+                <p>&copy; 2025 Project Poseidon. Powered by NASA satellite data.</p>
             </div>
         </footer>
     </div>

@@ -49,14 +49,15 @@ COPY frontend/ ./frontend/
 COPY README.md .
 COPY setup.py .
 
-# Create directory for data caching
-RUN mkdir -p data_cache
-
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
 ENV HOST=0.0.0.0
 ENV PORT=8000
 ENV DEBUG=False
+ENV CACHE_DIR=/app/data_cache
+
+# Create directory for data caching
+RUN mkdir -p /app/data_cache
 
 # Expose port
 EXPOSE 8000

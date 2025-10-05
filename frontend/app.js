@@ -1,5 +1,6 @@
 /**
- * Shark Foraging Hotspot Prediction - Frontend Application
+ * Project Poseidon - Frontend Application
+ * Predictive Oceanographic Shark Ecology & In-situ Data Observation Network
  * Interactive map interface for visualizing HSI predictions
  */
 
@@ -49,7 +50,7 @@ class SharkHotspotApp {
                 [90, 180]    // Northeast corner
             ],
             maxBoundsViscosity: 1.0 // Keep bounds strict
-        }).setView([20, 0], 2);
+        }).setView([50, 10], 4); // Focus on Europe
         
         // Add base tile layer
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -110,11 +111,15 @@ class SharkHotspotApp {
             this.resetMapView();
         });
         
-        // Add viewport filter checkbox
+        // Add viewport filter checkbox (enabled by default)
         document.getElementById('viewport-filter').addEventListener('change', (e) => {
             this.viewportFilterEnabled = e.target.checked;
             this.updateViewportIndicator();
         });
+        
+        // Enable viewport filter by default
+        document.getElementById('viewport-filter').checked = true;
+        this.viewportFilterEnabled = true;
         
         // Overlay listeners will be set up after DOM is ready
         
@@ -124,9 +129,16 @@ class SharkHotspotApp {
     }
     
     setDefaultDate() {
-        // Set default date to today
-        const today = new Date().toISOString().split('T')[0];
-        document.getElementById('target-date').value = today;
+        // Set default date to one month ago
+        const oneMonthAgo = new Date();
+        oneMonthAgo.setMonth(oneMonthAgo.getMonth() - 1);
+        const dateString = oneMonthAgo.toISOString().split('T')[0];
+        document.getElementById('target-date').value = dateString;
+        
+        // Set max date to 30 days ago to prevent selecting recent dates
+        const thirtyDaysAgo = new Date();
+        thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+        document.getElementById('target-date').max = thirtyDaysAgo.toISOString().split('T')[0];
     }
     
     async loadSharkSpecies() {
@@ -135,13 +147,23 @@ class SharkHotspotApp {
             const species = await response.json();
             
             const select = document.getElementById('shark-species');
-            select.innerHTML = '<option value="">Select a species...</option>';
+            select.innerHTML = '';
             
+            // Add Tiger Shark first as default
+            const tigerOption = document.createElement('option');
+            tigerOption.value = 'tiger_shark';
+            tigerOption.textContent = 'Tiger Shark';
+            tigerOption.selected = true;
+            select.appendChild(tigerOption);
+            
+            // Add other species
             for (const [key, profile] of Object.entries(species)) {
-                const option = document.createElement('option');
-                option.value = key;
-                option.textContent = profile.name;
-                select.appendChild(option);
+                if (key !== 'tiger_shark') { // Skip tiger shark as it's already added
+                    const option = document.createElement('option');
+                    option.value = key;
+                    option.textContent = profile.name;
+                    select.appendChild(option);
+                }
             }
         } catch (error) {
             console.error('Failed to load shark species:', error);
@@ -154,7 +176,8 @@ class SharkHotspotApp {
         const date = document.getElementById('target-date').value;
         const button = document.getElementById('predict-button');
         
-        button.disabled = !species || !date;
+        // Button is always enabled since we have defaults for both species and date
+        button.disabled = false;
     }
     
     getViewportBounds() {
@@ -216,6 +239,9 @@ class SharkHotspotApp {
             
             this.showStatus('Prediction completed successfully!', 'success');
             
+            // Scroll to overlays section after analysis completes
+            this.scrollToOverlays();
+            
         } catch (error) {
             console.error('Prediction failed:', error);
             this.showStatus(`Prediction failed: ${error.message}`, 'error');
@@ -247,6 +273,20 @@ class SharkHotspotApp {
                 dashArray: '5, 5',
                 opacity: 0.8
             }).addTo(this.map);
+        }
+    }
+    
+    scrollToOverlays() {
+        // Find the overlays section and scroll to it
+        const overlaysSection = document.querySelector('.overlay-controls-horizontal');
+        if (overlaysSection) {
+            overlaysSection.scrollIntoView({
+                behavior: 'smooth',
+                block: 'start'
+            });
+            console.log('Scrolled to overlays section');
+        } else {
+            console.warn('Overlays section not found');
         }
     }
     
@@ -332,9 +372,10 @@ class SharkHotspotApp {
             // Get the target date from current prediction
             const targetDate = this.currentData.metadata.target_date;
             
-            // Build API URL with density reduction
+            // Build API URL with density reduction and shark species for lag calculation
             const densityFactor = 6; // Higher = less dense overlays
-            const url = `${this.apiBaseUrl}/overlay/${type}?target_date=${targetDate}&density_factor=${densityFactor}`;
+            const sharkSpecies = document.getElementById('shark-species').value || 'tiger_shark';
+            const url = `${this.apiBaseUrl}/overlay/${type}?target_date=${targetDate}&shark_species=${sharkSpecies}&density_factor=${densityFactor}`;
             console.log(`Fetching overlay data from: ${url}`);
             
             const response = await fetch(url);
@@ -585,11 +626,7 @@ class SharkHotspotApp {
         
         this.hsiLayer.addTo(this.map);
         
-        // Fit map to data bounds
-        if (features.length > 0) {
-            const bounds = this.hsiLayer.getBounds();
-            this.map.fitBounds(bounds, { padding: [20, 20] });
-        }
+        // Keep current map view - don't auto-zoom to data bounds
     }
     
     updateHeatmap(features) {
@@ -681,7 +718,7 @@ class SharkHotspotApp {
     
     resetMapView() {
         if (!this.map) return;
-        this.map.setView([20, 0], 2);
+        this.map.setView([50, 10], 4); // Reset to Europe view
     }
     
     updateResultsPanel(metadata) {

@@ -12,6 +12,7 @@ services:
       - HOST=0.0.0.0
       - PORT=8000
       - DEBUG=False
+      - CACHE_DIR=/app/data_cache
       # NASA Earthdata credentials (set these in .env file or here)
       - EARTHDATA_USERNAME=${EARTHDATA_USERNAME}
       - EARTHDATA_PASSWORD=${EARTHDATA_PASSWORD}

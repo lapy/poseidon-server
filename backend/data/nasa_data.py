@@ -66,36 +66,46 @@ class NASADataManager:
         self.lon_range = (-180, 180)
         
         
-        # Check if authenticated
-        self._check_auth()
+        # Automatically authenticate with NASA Earthdata
+        self._auto_authenticate()
     
-    def _check_auth(self):
-        """Check if user is authenticated with NASA Earthdata"""
+    def _auto_authenticate(self):
+        """Automatically authenticate with NASA Earthdata"""
         try:
-            # Check if .netrc file exists or environment variables are set
-            import os
-            from pathlib import Path
-            
             # Check for .netrc file
             netrc_path = Path.home() / ".netrc"
-            if netrc_path.exists():
-                logger.info("Found .netrc file for NASA Earthdata authentication")
-                return
             
             # Check for environment variables
             if os.getenv('EARTHDATA_USERNAME') and os.getenv('EARTHDATA_PASSWORD'):
-                logger.info("Found NASA Earthdata credentials in environment variables")
-                return
+                logger.info("Authenticating with NASA Earthdata using environment variables")
+                auth = earthaccess.login(strategy="environment")
+                if auth:
+                    logger.info("Successfully authenticated with NASA Earthdata")
+                    return True
+                else:
+                    logger.error("Authentication failed with environment variables")
+                    return False
             
-            # If neither exists, show authentication instructions
-            logger.info("NASA Earthdata authentication not configured.")
-            logger.info("To authenticate, run: python -c \"import earthaccess; earthaccess.login()\"")
-            logger.info("Or set EARTHDATA_USERNAME and EARTHDATA_PASSWORD environment variables")
-            logger.info("Or create a .netrc file with your credentials")
+            elif netrc_path.exists():
+                logger.info("Authenticating with NASA Earthdata using .netrc file")
+                auth = earthaccess.login(strategy="netrc")
+                if auth:
+                    logger.info("Successfully authenticated with NASA Earthdata")
+                    return True
+                else:
+                    logger.error("Authentication failed with .netrc file")
+                    return False
+            
+            else:
+                logger.error("No authentication method found!")
+                logger.error("Please set EARTHDATA_USERNAME and EARTHDATA_PASSWORD environment variables")
+                logger.error("Or create a .netrc file with your credentials")
+                return False
             
         except Exception as e:
-            logger.warning(f"Authentication check failed: {e}")
-            logger.info("To authenticate, run: python -c \"import earthaccess; earthaccess.login()\"")
+            logger.error(f"Authentication failed: {e}")
+            logger.error("Please ensure your NASA Earthdata credentials are correct")
+            return False
     
     def authenticate(self, username: Optional[str] = None, password: Optional[str] = None):
         """Authenticate with NASA Earthdata Login"""
@@ -253,7 +263,7 @@ class NASADataManager:
                 # OISSS L4 has monthly temporal resolution - use hardcoded latest available date
                 # Salinity is relatively stable, and OISSS L4 data is typically 1-2 years behind
                 # Use a known good date from 2022 when data is reliably available
-                target_date = "2022-12-01"  # December 2022 - typically latest reliable OISSS L4 data
+                target_date = "2022-01-01"  # January 2022 - typically latest reliable OISSS L4 data
                 logger.info(f"Using hardcoded latest date for salinity: {target_date}")
                 search_window = 90  # Wider search window for monthly data
             else:
@@ -712,10 +722,16 @@ class NASADataManager:
             # Regrid to common grid
             regridded = self._regrid_to_common_grid(processed, 'salinity')
             
-            # Ensure the salinity variable has a consistent name
-            if sss_var != 'salinity':
-                regridded = regridded.rename({sss_var: 'salinity'})
-                logger.info(f"Renamed salinity variable from '{sss_var}' to 'salinity'")
+            # Ensure the salinity variable exists after regridding
+            if 'salinity' not in regridded.data_vars:
+                logger.error(f"Salinity variable missing after regridding. Available: {list(regridded.data_vars)}")
+                # Try to find the variable in regridded dataset
+                if regridded.data_vars:
+                    actual_var = list(regridded.data_vars)[0]
+                    regridded = regridded.rename({actual_var: 'salinity'})
+                    logger.info(f"Renamed '{actual_var}' to 'salinity'")
+            else:
+                logger.info(f"Salinity variable successfully regridded")
             
             return regridded
             

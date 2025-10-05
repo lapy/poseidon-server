@@ -13,7 +13,9 @@ import xarray as xr
 
 from models.hsi_model import HSIModel
 from data.nasa_data import NASADataManager
-from utils.geojson_converter import convert_hsi_to_geojson, convert_dataset_to_geojson
+from utils.geojson_converter import convert_hsi_to_geojson, convert_dataset_to_geojson, convert_hsi_to_geojson_cached, convert_dataset_to_geojson_cached
+from utils.geojson_cache import get_geojson_cache
+from utils.cache_cleanup import run_maintenance_cleanup, cleanup_expired_cache, cleanup_old_cache_by_date, cleanup_cache_by_size
 
 logger = logging.getLogger(__name__)
 
@@ -133,6 +135,52 @@ async def _get_overlay_dataset(overlay_type: str, target_date: str, bounds: Opti
     
     return dataset, variable
 
+async def _get_overlay_dataset_with_lag(overlay_type: str, target_date: str, bounds: Optional[Dict], lagged_dates: Dict) -> tuple[Optional[xr.Dataset], str]:
+    """
+    Get dataset for overlay with forced lagged data
+    
+    Args:
+        overlay_type: Type of overlay (chlorophyll, oceanographic, salinity)
+        target_date: Target date for data retrieval
+        bounds: Optional geographic bounds
+        lagged_dates: Dictionary with lagged dates for each dataset
+        
+    Returns:
+        Tuple of (dataset, variable_name)
+    """
+    try:
+        if overlay_type == 'chlorophyll':
+            # Use lagged chlorophyll data if available
+            if lagged_dates['chlorophyll_lag_days'] > 0:
+                logger.info(f"Fetching lagged chlorophyll data from {lagged_dates['chlorophyll_lag_date']}")
+                dataset = nasa_manager.download_data('chlorophyll', lagged_dates['chlorophyll_lag_date'], bounds)
+                if dataset is not None:
+                    logger.info(f"Successfully retrieved lagged chlorophyll data for overlay")
+                    return dataset, 'chlorophyll'
+                else:
+                    logger.warning(f"Lagged chlorophyll data not available, falling back to current date")
+            
+            # Fallback to current date
+            dataset = nasa_manager.download_data('chlorophyll', target_date, bounds)
+            return dataset, 'chlorophyll'
+            
+        elif overlay_type == 'oceanographic':
+            # Sea level data is always current (no lag)
+            dataset = nasa_manager.download_data('sea_level', target_date, bounds)
+            return dataset, 'oceanographic'
+            
+        elif overlay_type == 'salinity':
+            # Salinity data is always current (no lag, but uses hardcoded 2022 date)
+            dataset = nasa_manager.download_data('salinity', target_date, bounds)
+            return dataset, 'salinity'
+            
+        else:
+            return None, None
+            
+    except Exception as e:
+        logger.error(f"Failed to fetch {overlay_type} data for overlay: {e}")
+        return None, None
+
 @router.get("/hotspots")
 async def get_hotspots(
     target_date: str = Query(..., description="Target date in YYYY-MM-DD format"),
@@ -196,53 +244,75 @@ async def get_hotspots(
         lagged_dates = hsi_model.calculate_lagged_dates(target_date, shark_species)
         logger.info(f"Lagged dates: {lagged_dates}")
         
-        # Get current NASA satellite data using temporal merging
-        # This will fail fast at the NASA data retrieval step if any dataset is missing
-        try:
-            datasets = nasa_manager.get_data_for_date(target_date, geographic_bounds)
-            logger.info("All required datasets successfully retrieved from NASA with combined pass enhancement")
-            
-            # Cache datasets for overlay reuse
-            _cache_data(target_date, geographic_bounds, datasets)
-            
-        except ValueError as e:
-            logger.error(f"NASA data retrieval failed: {e}")
-            raise HTTPException(
-                status_code=404,
-                detail=str(e)
-            )
-        
-        # Get lagged data if available
+        # Fetch datasets efficiently - only get lagged data for chlorophyll and SST
+        datasets = {}
         lagged_chlorophyll_data = None
         lagged_sst_data = None
         
+        # Always fetch sea_level and salinity for current date (no lag)
         try:
-            # Try to get lagged chlorophyll data using temporal merging with combined passes
+            sea_level_data = nasa_manager.download_data('sea_level', target_date, geographic_bounds)
+            salinity_data = nasa_manager.download_data('salinity', target_date, geographic_bounds)
+            
+            if sea_level_data is not None:
+                datasets['sea_level'] = sea_level_data
+                logger.info("Successfully retrieved sea level data")
+            else:
+                raise ValueError("Failed to retrieve sea level data")
+                
+            if salinity_data is not None:
+                datasets['salinity'] = salinity_data
+                logger.info("Successfully retrieved salinity data")
+            else:
+                raise ValueError("Failed to retrieve salinity data")
+                
+        except Exception as e:
+            logger.error(f"Failed to retrieve required datasets: {e}")
+            raise HTTPException(status_code=404, detail=str(e))
+        
+        # Fetch lagged chlorophyll data (preferred over current date)
+        try:
             if lagged_dates['chlorophyll_lag_days'] > 0:
-                lagged_chlorophyll_datasets = nasa_manager.get_data_for_date(
-                    lagged_dates['chlorophyll_lag_date'], geographic_bounds
+                lagged_chlorophyll_data = nasa_manager.download_data(
+                    'chlorophyll', lagged_dates['chlorophyll_lag_date'], geographic_bounds
                 )
-                lagged_chlorophyll_data = lagged_chlorophyll_datasets.get('chlorophyll')
                 if lagged_chlorophyll_data is not None:
+                    datasets['chlorophyll'] = lagged_chlorophyll_data
                     logger.info(f"Successfully retrieved lagged chlorophyll data from {lagged_dates['chlorophyll_lag_date']}")
                 else:
-                    logger.warning(f"Could not retrieve lagged chlorophyll data from {lagged_dates['chlorophyll_lag_date']}")
+                    # Fallback to current date chlorophyll
+                    logger.warning(f"Could not retrieve lagged chlorophyll data, trying current date")
+                    datasets['chlorophyll'] = nasa_manager.download_data('chlorophyll', target_date, geographic_bounds)
+            else:
+                # No lag needed, fetch current date
+                datasets['chlorophyll'] = nasa_manager.download_data('chlorophyll', target_date, geographic_bounds)
         except Exception as e:
-            logger.warning(f"Failed to retrieve lagged chlorophyll data: {e}")
+            logger.error(f"Failed to retrieve chlorophyll data: {e}")
+            raise HTTPException(status_code=404, detail=f"Chlorophyll data retrieval failed: {e}")
         
+        # Fetch lagged SST data (preferred over current date)
         try:
-            # Try to get lagged SST data using temporal merging with combined passes
             if lagged_dates['temperature_lag_days'] > 0:
-                lagged_sst_datasets = nasa_manager.get_data_for_date(
-                    lagged_dates['temperature_lag_date'], geographic_bounds
+                lagged_sst_data = nasa_manager.download_data(
+                    'sst', lagged_dates['temperature_lag_date'], geographic_bounds
                 )
-                lagged_sst_data = lagged_sst_datasets.get('sst')
                 if lagged_sst_data is not None:
+                    datasets['sst'] = lagged_sst_data
                     logger.info(f"Successfully retrieved lagged SST data from {lagged_dates['temperature_lag_date']}")
                 else:
-                    logger.warning(f"Could not retrieve lagged SST data from {lagged_dates['temperature_lag_date']}")
+                    # Fallback to current date SST
+                    logger.warning(f"Could not retrieve lagged SST data, trying current date")
+                    datasets['sst'] = nasa_manager.download_data('sst', target_date, geographic_bounds)
+            else:
+                # No lag needed, fetch current date
+                datasets['sst'] = nasa_manager.download_data('sst', target_date, geographic_bounds)
         except Exception as e:
-            logger.warning(f"Failed to retrieve lagged SST data: {e}")
+            logger.error(f"Failed to retrieve SST data: {e}")
+            raise HTTPException(status_code=404, detail=f"SST data retrieval failed: {e}")
+        
+        # Cache datasets for overlay reuse
+        _cache_data(target_date, geographic_bounds, datasets)
+        logger.info("All required datasets successfully retrieved with optimized lag-based fetching")
         
         # Validate dataset content (fail-fast check already done above, this is for additional validation)
         for name, data in datasets.items():
@@ -271,18 +341,13 @@ async def get_hotspots(
                     detail="Salinity dataset is empty or missing required 'salinity' variable"
                 )
         
-        # Calculate HSI with lagged data
-        sea_level_data = datasets.get('sea_level')
-        salinity_data = datasets.get('salinity')
-        
-        # Note: Salinity data validation already done in fail-fast check above
-        
+        # Calculate HSI with optimized data (lagged data already in datasets)
         try:
             hsi_result = hsi_model.calculate_hsi(
                 chlorophyll_data=datasets['chlorophyll'],
-                sea_level_data=sea_level_data,
+                sea_level_data=datasets['sea_level'],
                 sst_data=datasets['sst'],
-                salinity_data=salinity_data,
+                salinity_data=datasets['salinity'],
                 shark_species=shark_species,
                 target_date=target_date,
                 geographic_bounds=geographic_bounds,
@@ -301,8 +366,13 @@ async def get_hotspots(
         
         # Format response based on requested format
         if format.lower() == "geojson":
-            # Convert to GeoJSON for map visualization
-            geojson_data = convert_hsi_to_geojson(hsi_result, geographic_bounds=geographic_bounds)
+            # Convert to GeoJSON for map visualization with caching
+            geojson_data = convert_hsi_to_geojson_cached(
+                hsi_result, 
+                target_date=target_date, 
+                shark_species=shark_species, 
+                geographic_bounds=geographic_bounds
+            )
             
             response_data = {
                 "type": "FeatureCollection",
@@ -422,6 +492,7 @@ async def get_shark_species():
 async def get_overlay_data(
     overlay_type: str,
     target_date: str = Query(..., description="Target date in YYYY-MM-DD format"),
+    shark_species: str = Query("tiger_shark", description="Shark species for lag calculation"),
     geographic_bounds: Optional[str] = Query(None, description="Geographic bounds as JSON string"),
     threshold: float = Query(0.0, description="Minimum value threshold for data inclusion"),
     density_factor: int = Query(4, description="Density reduction factor (higher = less dense, default 4)")
@@ -441,14 +512,26 @@ async def get_overlay_data(
         if overlay_type not in valid_overlays:
             raise HTTPException(status_code=400, detail=f"Invalid overlay type. Must be one of: {valid_overlays}")
         
-        # Get dataset - reuse HSI data if available, otherwise fetch separately
-        dataset, variable = await _get_overlay_dataset(overlay_type, target_date, bounds)
+        # Calculate lagged dates for overlay data
+        lagged_dates = hsi_model.calculate_lagged_dates(target_date, shark_species)
+        logger.info(f"Overlay lagged dates for {overlay_type}: {lagged_dates}")
+        
+        # Get dataset with lagged data
+        dataset, variable = await _get_overlay_dataset_with_lag(overlay_type, target_date, bounds, lagged_dates)
         
         if dataset is None:
             raise HTTPException(status_code=404, detail=f"No data available for {overlay_type} on {target_date}")
         
-        # Convert to GeoJSON with density reduction
-        geojson_data = convert_dataset_to_geojson(dataset, variable, bounds, threshold, density_factor)
+        # Convert to GeoJSON with density reduction and caching
+        geojson_data = convert_dataset_to_geojson_cached(
+            dataset, 
+            variable, 
+            target_date=target_date, 
+            overlay_type=overlay_type, 
+            geographic_bounds=bounds, 
+            threshold=threshold, 
+            density_factor=density_factor
+        )
         
         response_data = {
             "type": "FeatureCollection",
@@ -707,3 +790,67 @@ async def get_combined_pass_data(
     except Exception as e:
         logger.error(f"Error retrieving combined pass data: {e}")
         raise HTTPException(status_code=500, detail=f"Error retrieving combined pass data: {str(e)}")
+
+@router.get("/cache/stats")
+async def get_cache_stats():
+    """Get GeoJSON cache statistics"""
+    try:
+        cache_manager = get_geojson_cache()
+        stats = cache_manager.get_cache_stats()
+        return JSONResponse(content=stats)
+    except Exception as e:
+        logger.error(f"Error getting cache stats: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get cache statistics")
+
+@router.delete("/cache/invalidate")
+async def invalidate_cache(
+    cache_type: Optional[str] = Query(None, description="Cache type to invalidate (hsi, overlay, heatmap)"),
+    target_date: Optional[str] = Query(None, description="Target date to invalidate (YYYY-MM-DD)"),
+    shark_species: Optional[str] = Query(None, description="Shark species to invalidate")
+):
+    """Invalidate GeoJSON cache entries"""
+    try:
+        cache_manager = get_geojson_cache()
+        count = cache_manager.invalidate_cache(cache_type, target_date, shark_species)
+        return {"status": "success", "invalidated_entries": count}
+    except Exception as e:
+        logger.error(f"Error invalidating cache: {e}")
+        raise HTTPException(status_code=500, detail="Failed to invalidate cache")
+
+@router.delete("/cache/clear")
+async def clear_cache():
+    """Clear all GeoJSON cache data"""
+    try:
+        cache_manager = get_geojson_cache()
+        count = cache_manager.clear_all_cache()
+        return {"status": "success", "cleared_files": count}
+    except Exception as e:
+        logger.error(f"Error clearing cache: {e}")
+        raise HTTPException(status_code=500, detail="Failed to clear cache")
+
+@router.post("/cache/cleanup")
+async def cleanup_cache(
+    cleanup_type: str = Query("maintenance", description="Type of cleanup: 'maintenance', 'expired', 'old', 'size'"),
+    days_old: int = Query(7, description="Days old threshold for 'old' cleanup"),
+    max_size_mb: int = Query(500, description="Maximum size in MB for 'size' cleanup"),
+    ttl_hours: int = Query(24, description="TTL in hours for 'expired' cleanup")
+):
+    """Clean up GeoJSON cache data"""
+    try:
+        if cleanup_type == "maintenance":
+            results = run_maintenance_cleanup()
+            return {"status": "success", "results": results}
+        elif cleanup_type == "expired":
+            count = cleanup_expired_cache(ttl_hours)
+            return {"status": "success", "cleaned_entries": count}
+        elif cleanup_type == "old":
+            count = cleanup_old_cache_by_date(days_old)
+            return {"status": "success", "cleaned_entries": count}
+        elif cleanup_type == "size":
+            count = cleanup_cache_by_size(max_size_mb)
+            return {"status": "success", "cleaned_entries": count}
+        else:
+            raise HTTPException(status_code=400, detail="Invalid cleanup type. Use: maintenance, expired, old, size")
+    except Exception as e:
+        logger.error(f"Error during cache cleanup: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to cleanup cache: {str(e)}")

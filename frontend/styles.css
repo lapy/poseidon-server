@@ -1,4 +1,4 @@
-/* Shark Foraging Hotspot Prediction - Styles */
+/* Project Poseidon - Predictive Oceanographic Shark Ecology & In-situ Data Observation Network - Styles */
 
 * {
     margin: 0;
@@ -62,7 +62,6 @@ body {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
     gap: 1.5rem;
-    align-items: end;
 }
 
 .control-group {

@@ -5,8 +5,10 @@ Converts HSI grid data to GeoJSON format for map visualization
 
 import numpy as np
 import xarray as xr
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 import logging
+
+from .geojson_cache import get_geojson_cache
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +46,51 @@ def _apply_geographic_filter(data: xr.Dataset, geographic_bounds: Dict) -> xr.Da
     except Exception as e:
         logger.warning(f"Geographic filtering failed: {e}")
         return data
+
+def convert_hsi_to_geojson_cached(hsi_data: xr.Dataset, target_date: str, shark_species: str, threshold: float = 0.5, geographic_bounds: Dict = None) -> List[Dict[str, Any]]:
+    """
+    Convert HSI data to GeoJSON format with caching support
+    
+    Args:
+        hsi_data: HSI dataset with lat, lon, and hsi values
+        target_date: Target date for caching
+        shark_species: Shark species for caching
+        threshold: Minimum HSI value to include in output
+        geographic_bounds: Optional geographic bounds dict with 'north', 'south', 'east', 'west'
+    
+    Returns:
+        List of GeoJSON features
+    """
+    cache_manager = get_geojson_cache()
+    
+    # Try to get from cache first
+    cached_features = cache_manager.get_cached_features(
+        cache_type='hsi',
+        target_date=target_date,
+        shark_species=shark_species,
+        geographic_bounds=geographic_bounds,
+        threshold=threshold
+    )
+    
+    if cached_features is not None:
+        logger.info(f"Using cached HSI GeoJSON features for {shark_species} on {target_date}")
+        return cached_features
+    
+    # Generate features if not cached
+    logger.info(f"Generating new HSI GeoJSON features for {shark_species} on {target_date}")
+    features = convert_hsi_to_geojson(hsi_data, threshold, geographic_bounds)
+    
+    # Cache the results
+    cache_manager.cache_features(
+        features=features,
+        cache_type='hsi',
+        target_date=target_date,
+        shark_species=shark_species,
+        geographic_bounds=geographic_bounds,
+        threshold=threshold
+    )
+    
+    return features
 
 def convert_hsi_to_geojson(hsi_data: xr.Dataset, threshold: float = 0.5, geographic_bounds: Dict = None) -> List[Dict[str, Any]]:
     """
@@ -146,6 +193,55 @@ def convert_hsi_to_geojson(hsi_data: xr.Dataset, threshold: float = 0.5, geograp
         logger.error(f"GeoJSON conversion failed: {e}")
         return []
 
+def convert_dataset_to_geojson_cached(dataset: xr.Dataset, variable: str, target_date: str, overlay_type: str, geographic_bounds: Dict = None, threshold: float = 0.0, density_factor: int = 4) -> List[Dict[str, Any]]:
+    """
+    Convert raw dataset to GeoJSON format with caching support
+    
+    Args:
+        dataset: Raw dataset with lat, lon, and variable values
+        variable: Variable name to extract (e.g., 'chlorophyll', 'sea_level', 'salinity')
+        target_date: Target date for caching
+        overlay_type: Type of overlay for caching
+        geographic_bounds: Optional geographic bounds dict with 'north', 'south', 'east', 'west'
+        threshold: Minimum value to include in output (default 0.0 for all data)
+        density_factor: Factor to reduce density (every Nth point, default 4)
+    
+    Returns:
+        List of GeoJSON features
+    """
+    cache_manager = get_geojson_cache()
+    
+    # Try to get from cache first
+    cached_features = cache_manager.get_cached_features(
+        cache_type='overlay',
+        target_date=target_date,
+        overlay_type=overlay_type,
+        geographic_bounds=geographic_bounds,
+        threshold=threshold,
+        density_factor=density_factor
+    )
+    
+    if cached_features is not None:
+        logger.info(f"Using cached {overlay_type} GeoJSON features for {target_date}")
+        return cached_features
+    
+    # Generate features if not cached
+    logger.info(f"Generating new {overlay_type} GeoJSON features for {target_date}")
+    features = convert_dataset_to_geojson(dataset, variable, geographic_bounds, threshold, density_factor)
+    
+    # Cache the results
+    cache_manager.cache_features(
+        features=features,
+        cache_type='overlay',
+        target_date=target_date,
+        overlay_type=overlay_type,
+        geographic_bounds=geographic_bounds,
+        threshold=threshold,
+        density_factor=density_factor
+    )
+    
+    return features
+
 def convert_dataset_to_geojson(dataset: xr.Dataset, variable: str, geographic_bounds: Dict = None, threshold: float = 0.0, density_factor: int = 4) -> List[Dict[str, Any]]:
     """
     Convert raw dataset to GeoJSON format for overlay visualization
@@ -169,7 +265,15 @@ def convert_dataset_to_geojson(dataset: xr.Dataset, variable: str, geographic_bo
             logger.info(f"Applied geographic filtering to {variable} data: {geographic_bounds}")
         
         # Extract coordinates and variable values
-        data_var = dataset[variable]
+        # Handle special case for oceanographic overlay
+        if variable == 'oceanographic':
+            # For oceanographic overlay, use sea_level data but name it oceanographic
+            data_var = dataset['sea_level']
+            output_variable = 'oceanographic'
+        else:
+            data_var = dataset[variable]
+            output_variable = variable
+            
         lats = data_var.lat.values
         lons = data_var.lon.values
         
@@ -210,7 +314,7 @@ def convert_dataset_to_geojson(dataset: xr.Dataset, variable: str, geographic_bo
                     
                     # Create properties
                     properties = {
-                        variable: value,
+                        output_variable: value,
                         "lat": float(lat + lat_step/2),
                         "lon": float(lon + lon_step/2)
                     }
@@ -233,6 +337,53 @@ def convert_dataset_to_geojson(dataset: xr.Dataset, variable: str, geographic_bo
     except Exception as e:
         logger.error(f"GeoJSON conversion failed for {variable}: {e}")
         return []
+
+def convert_hsi_to_heatmap_data_cached(hsi_data: xr.Dataset, target_date: str, shark_species: str, max_points: int = 10000, geographic_bounds: Dict = None) -> List[Dict[str, Any]]:
+    """
+    Convert HSI data to heatmap format with caching support
+    
+    Args:
+        hsi_data: HSI dataset
+        target_date: Target date for caching
+        shark_species: Shark species for caching
+        max_points: Maximum number of points to return
+        geographic_bounds: Optional geographic bounds dict with 'north', 'south', 'east', 'west'
+    
+    Returns:
+        List of heatmap points
+    """
+    cache_manager = get_geojson_cache()
+    
+    # Try to get from cache first
+    cached_features = cache_manager.get_cached_features(
+        cache_type='heatmap',
+        target_date=target_date,
+        shark_species=shark_species,
+        geographic_bounds=geographic_bounds,
+        threshold=0.0,  # Heatmap doesn't use threshold
+        density_factor=max_points  # Use max_points as density factor for cache key
+    )
+    
+    if cached_features is not None:
+        logger.info(f"Using cached heatmap data for {shark_species} on {target_date}")
+        return cached_features
+    
+    # Generate features if not cached
+    logger.info(f"Generating new heatmap data for {shark_species} on {target_date}")
+    features = convert_hsi_to_heatmap_data(hsi_data, max_points, geographic_bounds)
+    
+    # Cache the results
+    cache_manager.cache_features(
+        features=features,
+        cache_type='heatmap',
+        target_date=target_date,
+        shark_species=shark_species,
+        geographic_bounds=geographic_bounds,
+        threshold=0.0,
+        density_factor=max_points
+    )
+    
+    return features
 
 def convert_hsi_to_heatmap_data(hsi_data: xr.Dataset, max_points: int = 10000, geographic_bounds: Dict = None) -> List[Dict[str, Any]]:
     """

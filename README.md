@@ -513,6 +513,17 @@ logging.basicConfig(level=logging.DEBUG)
 - Temporary files are cleaned up after processing
 - Use `POST /api/cleanup` to manually clean temporary files
 
+## 📚 Resources
+
+For a complete list of datasets, libraries, and tools used in this project, see [RESOURCES.md](RESOURCES.md).
+
+**Quick Links:**
+- [NASA Earthdata](https://www.earthdata.nasa.gov/)
+- [PO.DAAC Data Portal](https://podaac.jpl.nasa.gov/)
+- [earthaccess Library](https://earthaccess.readthedocs.io/)
+- [FastAPI Documentation](https://fastapi.tiangolo.com/)
+- [Leaflet.js](https://leafletjs.com/)
+
 ## 🤝 Contributing
 
 1. Fork the repository
@@ -520,6 +531,16 @@ logging.basicConfig(level=logging.DEBUG)
 3. Make your changes
 4. Add tests if applicable
 5. Submit a pull request
+
+## 🤖 AI Assistance Disclosure
+
+This project was developed with assistance from AI tools (Claude by Anthropic) for:
+- Code development and optimization
+- Documentation writing
+- Architecture design and refactoring
+- Debugging and problem-solving
+
+All scientific concepts, methodologies, and NASA data integration were implemented based on established research and official documentation. The AI served as a development assistant while the project architect maintained oversight of all technical decisions and implementations.
 
 ## 📄 License
 

@@ -173,9 +173,13 @@ Where:
 
 - **Main Repository**: [GitHub Repository Link]
 - **Live Demo**: [Web Application URL]
-- **API Documentation**: `/api/datasets` endpoint
-- **Technical Documentation**: `README.md` and `OCEANOGRAPHIC_FEATURES.md`
+- **API Documentation**: `/api/docs` endpoint (Swagger UI)
+- **Technical Documentation**: 
+  - `README.md` - Main documentation
+  - `OCEANOGRAPHIC_FEATURES.md` - Detailed feature detection algorithms
+  - `RESOURCES.md` - Complete list of datasets, libraries, and tools
 - **Challenge Information**: [NASA Space Apps Challenge 2025](https://www.spaceappschallenge.org/2025/challenges/sharks-from-space/)
+- **NASA Datasets**: All datasets accessible via [PO.DAAC](https://podaac.jpl.nasa.gov/)
 
 ## 👥 Team Contribution
 
@@ -184,4 +188,14 @@ This project demonstrates the power of combining:
 - **Oceanographic Modeling**: Advanced feature detection algorithms
 - **Marine Biology**: Species-specific habitat requirements
 - **Web Development**: Accessible data visualization
+- **Software Engineering**: Clean, maintainable code architecture
 - **Open Science**: Transparent, reproducible research
+
+### Development Methodology
+This project was developed with AI assistance (Claude by Anthropic) as a coding partner, helping with:
+- Software architecture and design patterns
+- Code implementation and optimization
+- Documentation and technical writing
+- Debugging and code quality improvements
+
+All scientific methodologies, oceanographic concepts, and NASA data integration approaches are based on peer-reviewed research and official NASA documentation. The human developer maintained full oversight of technical decisions, architecture, and implementation quality.

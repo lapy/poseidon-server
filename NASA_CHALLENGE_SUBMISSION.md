@@ -88,10 +88,10 @@ HSI(x,y,t) = (f_C(C')^{w_C} \times f_E(E')^{w_E} \times f_S(S)^{w_S})^{\frac{1}{
 ```
 
 Where:
-- `mathf_C`: Chlorophyll suitability (food web foundation)
-- `mathf_E`: Combined eddy and front suitability (prey concentration)
-- `mathf_S`: Temperature suitability (habitat filter)
-- `mathw_C, w_E, w_S`: Species-specific weights
+- $f_C$: Chlorophyll suitability (food web foundation)
+- $f_E$: Combined eddy and front suitability (prey concentration)
+- $f_S$: Temperature suitability (habitat filter)
+- $w_C, w_E, w_S$: Species-specific weights
 
 ### Ecological Principles
 - **Bottom-Up Control**: Phytoplankton → zooplankton → fish → sharks

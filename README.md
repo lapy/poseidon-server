@@ -75,7 +75,7 @@ The application uses four NASA satellite datasets with enhanced processing:
 
 #### Front Detection:
 - **Ocean Fronts**: Sharp boundaries between different water masses identified by steep spatial gradients in SLA
-- **Gradient Calculation**: Computed as `math\sqrt{\left(\frac{\partial SLA}{\partial lat}\right)^2 + \left(\frac{\partial SLA}{\partial lon}\right)^2}` to identify convergence zones
+- **Gradient Calculation**: Computed as $|\nabla SLA| = \sqrt{\left(\frac{\partial SLA}{\partial lat}\right)^2 + \left(\frac{\partial SLA}{\partial lon}\right)^2}$ to identify convergence zones
 - **Front Suitability**: High gradients (>0.05 m/degree) indicate areas where prey concentrates
 - **Thermal Fronts**: Additional fronts detected through SST gradients
 
@@ -132,25 +132,25 @@ H(x,y,t) = f_{sal}(S) \times (f_C(C')^{w_C} \times f_E(E')^{w_E} \times f_S(S)^{
 ```
 
 Where:
-- `mathf_{sal}(S)`: Binary salinity filter (1 for suitable salinity, 0 for unsuitable)
-- `mathf_C`: Normalized chlorophyll concentration (food web foundation)
-- `mathf_E`: Combined eddy and front suitability from sea level anomaly
-- `mathf_S`: Gaussian temperature suitability (habitability filter)
-- `mathw_C, w_E, w_S`: Species-specific weights
+- $f_{sal}(S)$: Binary salinity filter (1 for suitable salinity, 0 for unsuitable)
+- $f_C$: Normalized chlorophyll concentration (food web foundation)
+- $f_E$: Combined eddy and front suitability from sea level anomaly
+- $f_S$: Gaussian temperature suitability (habitability filter)
+- $w_C, w_E, w_S$: Species-specific weights
 
 ### Enhanced Processing Features:
 
 #### Oceanographic Feature Detection:
 - **Eddy Detection**: 
-  - Gaussian normalization: `mathf_{eddy} = \exp\left(-\frac{E'^2}{2\sigma^2}\right)` where `math\sigma = 0.1m`
+  - Gaussian normalization: $f_{eddy} = \exp\left(-\frac{E'^2}{2\sigma^2}\right)$ where $\sigma = 0.1m$
   - Captures both cyclonic (upwelling) and anticyclonic (downwelling) eddies
   - Optimal eddy strength provides highest shark foraging suitability
 - **Front Detection**: 
-  - Spatial gradient calculation: `math|\nabla SLA| = \sqrt{\left(\frac{\partial SLA}{\partial lat}\right)^2 + \left(\frac{\partial SLA}{\partial lon}\right)^2}`
-  - Exponential front suitability: `mathf_{front} = \exp\left(-\frac{|\nabla SLA|}{\sigma_{front}}\right)` where `math\sigma_{front} = 0.05 \text{ m/degree}`
+  - Spatial gradient calculation: $|\nabla SLA| = \sqrt{\left(\frac{\partial SLA}{\partial lat}\right)^2 + \left(\frac{\partial SLA}{\partial lon}\right)^2}$
+  - Exponential front suitability: $f_{front} = \exp\left(-\frac{|\nabla SLA|}{\sigma_{front}}\right)$ where $\sigma_{front} = 0.05 \text{ m/degree}$
   - Identifies convergence zones where prey accumulates
 - **Combined Oceanographic Suitability**: 
-  - Weighted combination: `mathf_E = 0.6 \times f_{eddy} + 0.4 \times f_{front}`
+  - Weighted combination: $f_E = 0.6 \times f_{eddy} + 0.4 \times f_{front}$
   - Eddies (60%) and fronts (40%) both contribute to prey concentration
 
 #### Advanced Data Processing:
@@ -342,10 +342,10 @@ All data sources provide global coverage:
 
 The HSI model uses species-specific parameters that can be adjusted:
 
-- **`mathS_{opt}`**: Optimal temperature for the species
-- **`math\sigma_S`**: Temperature tolerance (standard deviation)
-- **`mathT_{lag}`**: Temperature lag in days
-- **`mathC_{lag}`**: Chlorophyll lag in days
+- $S_{opt}$: Optimal temperature for the species
+- $\sigma_S$: Temperature tolerance (standard deviation)
+- $T_{lag}$: Temperature lag in days
+- $C_{lag}$: Chlorophyll lag in days
 - **Weights**: Relative importance of each environmental factor
 
 ### Trophic Lag Implementation

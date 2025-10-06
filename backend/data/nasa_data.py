@@ -236,7 +236,7 @@ class NASADataManager:
             logger.error(f"Traceback: {traceback.format_exc()}")
             return []
     
-    def download_data(self, dataset: str, target_date: str, geographic_bounds: Dict = None) -> Optional[xr.Dataset]:
+    def download_data(self, dataset: str, target_date: str) -> Optional[xr.Dataset]:
         """Download and process data for a specific date"""
         # For salinity, use a generic cache key since it's time-insensitive
         if dataset == 'salinity':
@@ -251,10 +251,6 @@ class NASADataManager:
             logger.info(f"Using cached data for {dataset} on {target_date}")
             cached_data = self._load_from_cache(dataset, date_str)
             
-            # Apply geographic filtering to cached data if bounds provided
-            if geographic_bounds and cached_data is not None:
-                cached_data = self._apply_geographic_filter(cached_data, geographic_bounds)
-                logger.info(f"Applied geographic filtering to cached {dataset} data")
             
             return cached_data
         
@@ -319,10 +315,6 @@ class NASADataManager:
                         cache_key = 'latest' if dataset == 'salinity' else date_str
                         self._save_to_cache(processed_data, dataset, cache_key)
                         
-                        # Apply geographic filtering if bounds provided
-                        if geographic_bounds:
-                            processed_data = self._apply_geographic_filter(processed_data, geographic_bounds)
-                            logger.info(f"Applied geographic filtering to {dataset} data")
                         
                         return processed_data
                         
@@ -812,7 +804,7 @@ class NASADataManager:
             logger.error(f"Regridding failed: {e}")
             return data
     
-    def get_data_for_date(self, target_date: str, geographic_bounds: Dict = None) -> Dict[str, Optional[xr.Dataset]]:
+    def get_data_for_date(self, target_date: str) -> Dict[str, Optional[xr.Dataset]]:
         """
         Get all required datasets for a specific date using temporal merging only.
         Uses NASA-SSH's built-in temporal merging within the 10-day observation window.
@@ -850,34 +842,6 @@ class NASADataManager:
         logger.info("All required datasets successfully retrieved using temporal merging")
         return datasets
     
-    def _apply_geographic_filter(self, data: xr.Dataset, geographic_bounds: Dict) -> xr.Dataset:
-        """Apply geographic bounds to dataset"""
-        try:
-            if geographic_bounds is None:
-                return data
-            
-            # Apply latitude bounds
-            if 'lat' in data.coords:
-                lat_mask = (data['lat'] >= geographic_bounds['south']) & (data['lat'] <= geographic_bounds['north'])
-                data = data.where(lat_mask)
-                logger.debug(f"Applied latitude filter: {geographic_bounds['south']} to {geographic_bounds['north']}")
-            
-            # Apply longitude bounds (handle 0-360 vs -180-180)
-            if 'lon' in data.coords:
-                if geographic_bounds['west'] < geographic_bounds['east']:
-                    # Normal case: west < east
-                    lon_mask = (data['lon'] >= geographic_bounds['west']) & (data['lon'] <= geographic_bounds['east'])
-                else:
-                    # Crosses dateline: west > east
-                    lon_mask = (data['lon'] >= geographic_bounds['west']) | (data['lon'] <= geographic_bounds['east'])
-                data = data.where(lon_mask)
-                logger.debug(f"Applied longitude filter: {geographic_bounds['west']} to {geographic_bounds['east']}")
-            
-            return data
-            
-        except Exception as e:
-            logger.error(f"Geographic filtering failed: {e}")
-            return data
     
     def _cleanup_temp_file(self, file_path: str, max_retries: int = 3):
         """Clean up temporary file with retry logic"""
@@ -954,7 +918,7 @@ class NASADataManager:
         }
     
     
-    def download_along_track_data(self, target_date: str, geographic_bounds: Dict = None, pass_type: str = None) -> Optional[xr.Dataset]:
+    def download_along_track_data(self, target_date: str, pass_type: str = None) -> Optional[xr.Dataset]:
         """
         Download and process NASA-SSH along-track data for higher resolution analysis
         

@@ -35,22 +35,20 @@ class GeoJSONCacheManager:
         
         logger.info(f"GeoJSON cache initialized at: {self.cache_dir}")
     
-    def _generate_cache_key(self, 
+    def _generate_cache_key(self,
                           cache_type: str,
-                          target_date: str, 
+                          target_date: str,
                           shark_species: Optional[str] = None,
-                          geographic_bounds: Optional[Dict] = None,
                           threshold: float = 0.5,
                           density_factor: int = 4,
                           overlay_type: Optional[str] = None) -> str:
         """
         Generate a unique cache key for the given parameters
-        
+
         Args:
             cache_type: Type of cache ('hsi', 'overlay', 'heatmap')
             target_date: Target date for data
             shark_species: Shark species (for HSI cache)
-            geographic_bounds: Geographic bounds dict
             threshold: HSI threshold value
             density_factor: Density reduction factor
             overlay_type: Overlay type (for overlay cache)
@@ -71,14 +69,6 @@ class GeoJSONCacheManager:
             params['shark_species'] = shark_species
         if overlay_type:
             params['overlay_type'] = overlay_type
-        if geographic_bounds:
-            # Sort bounds to ensure consistent keys
-            params['bounds'] = {
-                'north': geographic_bounds.get('north'),
-                'south': geographic_bounds.get('south'),
-                'east': geographic_bounds.get('east'),
-                'west': geographic_bounds.get('west')
-            }
         
         # Convert to JSON string and create hash
         params_str = json.dumps(params, sort_keys=True)
@@ -136,23 +126,21 @@ class GeoJSONCacheManager:
             logger.error(f"Error checking cache validity for {cache_key}: {e}")
             return False
     
-    def get_cached_features(self, 
+    def get_cached_features(self,
                           cache_type: str,
                           target_date: str,
                           shark_species: Optional[str] = None,
-                          geographic_bounds: Optional[Dict] = None,
                           threshold: float = 0.5,
                           density_factor: int = 4,
                           overlay_type: Optional[str] = None,
                           ttl_hours: Optional[int] = None) -> Optional[List[Dict[str, Any]]]:
         """
         Retrieve cached GeoJSON features
-        
+
         Args:
             cache_type: Type of cache ('hsi', 'overlay', 'heatmap')
             target_date: Target date for data
             shark_species: Shark species (for HSI cache)
-            geographic_bounds: Geographic bounds dict
             threshold: HSI threshold value
             density_factor: Density reduction factor
             overlay_type: Overlay type (for overlay cache)
@@ -162,7 +150,7 @@ class GeoJSONCacheManager:
             Cached features list or None if not found/invalid
         """
         cache_key = self._generate_cache_key(
-            cache_type, target_date, shark_species, geographic_bounds,
+            cache_type, target_date, shark_species,
             threshold, density_factor, overlay_type
         )
         
@@ -181,12 +169,11 @@ class GeoJSONCacheManager:
             logger.error(f"Error loading cached features for {cache_key}: {e}")
             return None
     
-    def cache_features(self, 
+    def cache_features(self,
                       features: List[Dict[str, Any]],
                       cache_type: str,
                       target_date: str,
                       shark_species: Optional[str] = None,
-                      geographic_bounds: Optional[Dict] = None,
                       threshold: float = 0.5,
                       density_factor: int = 4,
                       overlay_type: Optional[str] = None) -> bool:
@@ -198,7 +185,6 @@ class GeoJSONCacheManager:
             cache_type: Type of cache ('hsi', 'overlay', 'heatmap')
             target_date: Target date for data
             shark_species: Shark species (for HSI cache)
-            geographic_bounds: Geographic bounds dict
             threshold: HSI threshold value
             density_factor: Density reduction factor
             overlay_type: Overlay type (for overlay cache)
@@ -211,7 +197,7 @@ class GeoJSONCacheManager:
             return False
         
         cache_key = self._generate_cache_key(
-            cache_type, target_date, shark_species, geographic_bounds,
+            cache_type, target_date, shark_species,
             threshold, density_factor, overlay_type
         )
         
@@ -229,7 +215,6 @@ class GeoJSONCacheManager:
                 'overlay_type': overlay_type,
                 'threshold': threshold,
                 'density_factor': density_factor,
-                'geographic_bounds': geographic_bounds,
                 'feature_count': len(features),
                 'created_at': datetime.now().isoformat(),
                 'cache_key': cache_key

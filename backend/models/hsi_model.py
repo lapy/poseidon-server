@@ -79,14 +79,13 @@ class HSIModel:
             )
         }
     
-    def calculate_hsi(self, 
+    def calculate_hsi(self,
                      chlorophyll_data: xr.Dataset,
                      sea_level_data: xr.Dataset,
                      sst_data: xr.Dataset,
                      salinity_data: xr.Dataset,
                      shark_species: str,
                      target_date: str,
-                     geographic_bounds: Dict = None,
                      lagged_chlorophyll_data: xr.Dataset = None,
                      lagged_sst_data: xr.Dataset = None) -> xr.Dataset:
         """
@@ -103,7 +102,6 @@ class HSIModel:
             salinity_data: Sea surface salinity data (current)
             shark_species: Species name ('great_white', 'tiger_shark', or 'bull_shark')
             target_date: Target date in YYYY-MM-DD format
-            geographic_bounds: Geographic bounds for filtering (optional)
             lagged_chlorophyll_data: Lagged chlorophyll data (optional)
             lagged_sst_data: Lagged SST data (optional)
             
@@ -117,19 +115,6 @@ class HSIModel:
             
             profile = self.shark_profiles[shark_species]
             
-            # Apply geographic filtering to all datasets if bounds provided
-            if geographic_bounds:
-                chlorophyll_data = self._apply_geographic_filter(chlorophyll_data, geographic_bounds)
-                sea_level_data = self._apply_geographic_filter(sea_level_data, geographic_bounds)
-                sst_data = self._apply_geographic_filter(sst_data, geographic_bounds)
-                salinity_data = self._apply_geographic_filter(salinity_data, geographic_bounds)
-                
-                if lagged_chlorophyll_data is not None:
-                    lagged_chlorophyll_data = self._apply_geographic_filter(lagged_chlorophyll_data, geographic_bounds)
-                if lagged_sst_data is not None:
-                    lagged_sst_data = self._apply_geographic_filter(lagged_sst_data, geographic_bounds)
-                
-                logger.info(f"Applied geographic filtering to all datasets")
             
             # Extract data variables - use lagged data if available
             if lagged_chlorophyll_data is not None:
@@ -441,35 +426,59 @@ class HSIModel:
             'temperature_lag_days': profile.t_lag
         }
     
-    def _apply_geographic_filter(self, data: xr.Dataset, geographic_bounds: Dict) -> xr.Dataset:
-        """Apply geographic bounds to dataset"""
-        try:
-            if geographic_bounds is None:
-                return data
-            
-            # Apply latitude bounds
-            if 'lat' in data.coords:
-                lat_mask = (data['lat'] >= geographic_bounds['south']) & (data['lat'] <= geographic_bounds['north'])
-                data = data.where(lat_mask)
-                logger.debug(f"Applied latitude filter: {geographic_bounds['south']} to {geographic_bounds['north']}")
-            
-            # Apply longitude bounds (handle 0-360 vs -180-180)
-            if 'lon' in data.coords:
-                if geographic_bounds['west'] < geographic_bounds['east']:
-                    # Normal case: west < east
-                    lon_mask = (data['lon'] >= geographic_bounds['west']) & (data['lon'] <= geographic_bounds['east'])
-                else:
-                    # Crosses dateline: west > east
-                    lon_mask = (data['lon'] >= geographic_bounds['west']) | (data['lon'] <= geographic_bounds['east'])
-                data = data.where(lon_mask)
-                logger.debug(f"Applied longitude filter: {geographic_bounds['west']} to {geographic_bounds['east']}")
-            
-            return data
-            
-        except Exception as e:
-            logger.error(f"Geographic filtering failed: {e}")
-            return data
     
+    def calculate_component_contributions(self, f_c: float, f_e: float, f_s: float, profile: SharkProfile) -> Dict[str, float]:
+        """
+        Calculate the relative contribution of each component to the HSI score
+
+        Args:
+            f_c: Chlorophyll suitability (0-1)
+            f_e: Oceanographic suitability (0-1)
+            f_s: Temperature suitability (0-1)
+            profile: Shark species profile with weights
+
+        Returns:
+            Dictionary with contribution percentages for each component
+        """
+        try:
+            # Calculate the weighted geometric mean components
+            total_weight = profile.total_weight
+
+            # Individual contributions before normalization
+            c_contrib = (f_c ** profile.w_c) if f_c > 0 else 0
+            e_contrib = (f_e ** profile.w_e) if f_e > 0 else 0
+            s_contrib = (f_s ** profile.w_s) if f_s > 0 else 0
+
+            # Combined product
+            combined = c_contrib * e_contrib * s_contrib
+
+            if combined == 0:
+                return {
+                    'chlorophyll': 0.0,
+                    'oceanographic': 0.0,
+                    'temperature': 0.0
+                }
+
+            # Calculate relative contributions using the geometric mean formula
+            # The contribution of each component is proportional to its weight in the geometric mean
+            c_contrib_pct = (profile.w_c / total_weight) * 100
+            e_contrib_pct = (profile.w_e / total_weight) * 100
+            s_contrib_pct = (profile.w_s / total_weight) * 100
+
+            return {
+                'chlorophyll': c_contrib_pct,
+                'oceanographic': e_contrib_pct,
+                'temperature': s_contrib_pct
+            }
+
+        except Exception as e:
+            logger.error(f"Component contribution calculation failed: {e}")
+            return {
+                'chlorophyll': 0.0,
+                'oceanographic': 0.0,
+                'temperature': 0.0
+            }
+
     def get_hsi_statistics(self, hsi_data: xr.Dataset) -> Dict[str, Any]:
         """Calculate statistics for HSI data"""
         try:

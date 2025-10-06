@@ -179,14 +179,3 @@ def run_maintenance_cleanup() -> dict:
     
     return results
 
-def schedule_periodic_cleanup():
-    """
-    Schedule periodic cache cleanup (can be called from a cron job or scheduler)
-    """
-    try:
-        results = run_maintenance_cleanup()
-        logger.info(f"Periodic cache cleanup completed: {results}")
-        return results
-    except Exception as e:
-        logger.error(f"Error in periodic cache cleanup: {e}")
-        return {'error': str(e)}

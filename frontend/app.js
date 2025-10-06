@@ -11,8 +11,6 @@ class SharkHotspotApp {
         this.heatmapLayer = null;
         this.currentData = null;
         this.isHeatmapMode = false;
-        this.viewportFilterEnabled = false;
-        this.viewportIndicator = null;
         
         // Overlay layers
         this.overlayLayers = {
@@ -111,21 +109,7 @@ class SharkHotspotApp {
             this.resetMapView();
         });
         
-        // Add viewport filter checkbox (enabled by default)
-        document.getElementById('viewport-filter').addEventListener('change', (e) => {
-            this.viewportFilterEnabled = e.target.checked;
-            this.updateViewportIndicator();
-        });
-        
-        // Enable viewport filter by default
-        document.getElementById('viewport-filter').checked = true;
-        this.viewportFilterEnabled = true;
-        
         // Overlay listeners will be set up after DOM is ready
-        
-        // Add map event listeners for viewport changes
-        this.map.on('zoomend', () => this.updateViewportIndicator());
-        this.map.on('moveend', () => this.updateViewportIndicator());
     }
     
     setDefaultDate() {
@@ -180,25 +164,6 @@ class SharkHotspotApp {
         button.disabled = false;
     }
     
-    getViewportBounds() {
-        if (!this.map) {
-            console.warn('Map not initialized, returning default bounds');
-            return {
-                north: 90,
-                south: -90,
-                east: 180,
-                west: -180
-            };
-        }
-        
-        const bounds = this.map.getBounds();
-        return {
-            north: bounds.getNorth(),
-            south: bounds.getSouth(),
-            east: bounds.getEast(),
-            west: bounds.getWest()
-        };
-    }
     
     async predictHotspots() {
         const species = document.getElementById('shark-species').value;
@@ -210,19 +175,10 @@ class SharkHotspotApp {
         }
         
         this.showLoading(true);
-        const statusMessage = this.viewportFilterEnabled ? 
-            'Processing NASA satellite data for current viewport...' : 
-            'Processing NASA satellite data...';
-        this.showStatus(statusMessage, 'loading');
-        
+        this.showStatus('Processing NASA satellite data for entire dataset...', 'loading');
+
         try {
-            let url = `${this.apiBaseUrl}/hotspots?target_date=${date}&shark_species=${species}&format=geojson`;
-            
-            // Add viewport bounds if filtering is enabled
-            if (this.viewportFilterEnabled) {
-                const viewportBounds = this.getViewportBounds();
-                url += `&north=${viewportBounds.north}&south=${viewportBounds.south}&east=${viewportBounds.east}&west=${viewportBounds.west}`;
-            }
+            const url = `${this.apiBaseUrl}/hotspots?target_date=${date}&shark_species=${species}&format=geojson`;
             
             const response = await fetch(url);
             
@@ -250,31 +206,6 @@ class SharkHotspotApp {
         }
     }
     
-    updateViewportIndicator() {
-        // Check if map is initialized
-        if (!this.map) {
-            console.warn('Map not initialized, skipping viewport indicator update');
-            return;
-        }
-        
-        // Remove existing indicator
-        if (this.viewportIndicator) {
-            this.map.removeLayer(this.viewportIndicator);
-            this.viewportIndicator = null;
-        }
-        
-        // Add new indicator if viewport filtering is enabled
-        if (this.viewportFilterEnabled) {
-            const bounds = this.getViewportBounds();
-            this.viewportIndicator = L.rectangle([[bounds.south, bounds.west], [bounds.north, bounds.east]], {
-                color: '#ff7800',
-                weight: 2,
-                fill: false,
-                dashArray: '5, 5',
-                opacity: 0.8
-            }).addTo(this.map);
-        }
-    }
     
     scrollToOverlays() {
         // Find the overlays section and scroll to it
@@ -506,9 +437,8 @@ class SharkHotspotApp {
     
     updatePerformanceInfo(metadata) {
         const processingArea = metadata.processing_area || 'Global';
-        const geographicBounds = metadata.geographic_bounds;
         const laggedDataAvailable = metadata.lagged_data_available;
-        
+
         let performanceHtml = `
             <div class="performance-stats">
                 <div class="stat-item">
@@ -516,17 +446,6 @@ class SharkHotspotApp {
                     <span class="stat-value">${processingArea}</span>
                 </div>
         `;
-        
-        if (geographicBounds) {
-            const area = Math.round((geographicBounds.north - geographicBounds.south) * 
-                                  (geographicBounds.east - geographicBounds.west));
-            performanceHtml += `
-                <div class="stat-item">
-                    <span class="stat-label">Viewport Area:</span>
-                    <span class="stat-value">${area}°²</span>
-                </div>
-            `;
-        }
         
         if (laggedDataAvailable) {
             performanceHtml += `
@@ -612,9 +531,38 @@ class SharkHotspotApp {
                 opacity: 0.5
             }),
             onEachFeature: (feature, layer) => {
+                // Get component contributions if available
+                const contributions = feature.properties.component_contributions || {};
+                const hasContributions = contributions.chlorophyll !== undefined;
+
                 const popup = `
                     <h3>HSI Prediction</h3>
                     <p><strong>HSI Value:</strong> <span class="hsi-value">${feature.properties.hsi.toFixed(3)}</span></p>
+                    <div class="hsi-components">
+                        <h4>Suitability Components:</h4>
+                        <div class="component-grid">
+                            <div class="component-item">
+                                <span class="component-label">Temperature:</span>
+                                <span class="component-value">${feature.properties.temperature_suitability?.toFixed(3) || 'N/A'}</span>
+                                ${hasContributions ? `<span class="component-contrib">(${contributions.temperature?.toFixed(1) || '0.0'}%)</span>` : ''}
+                            </div>
+                            <div class="component-item">
+                                <span class="component-label">Chlorophyll:</span>
+                                <span class="component-value">${feature.properties.chlorophyll_suitability?.toFixed(3) || 'N/A'}</span>
+                                ${hasContributions ? `<span class="component-contrib">(${contributions.chlorophyll?.toFixed(1) || '0.0'}%)</span>` : ''}
+                            </div>
+                            <div class="component-item">
+                                <span class="component-label">Oceanographic:</span>
+                                <span class="component-value">${feature.properties.sea_level_suitability?.toFixed(3) || 'N/A'}</span>
+                                ${hasContributions ? `<span class="component-contrib">(${contributions.oceanographic?.toFixed(1) || '0.0'}%)</span>` : ''}
+                            </div>
+                            <div class="component-item">
+                                <span class="component-label">Salinity:</span>
+                                <span class="component-value">${feature.properties.salinity_suitability?.toFixed(3) || 'N/A'}</span>
+                            </div>
+                        </div>
+                        ${hasContributions ? `<div class="contribution-note">* Percentages show relative contribution to HSI score</div>` : ''}
+                    </div>
                     <p><strong>Latitude:</strong> ${feature.properties.lat.toFixed(2)}°</p>
                     <p><strong>Longitude:</strong> ${feature.properties.lon.toFixed(2)}°</p>
                     <p><strong>Species:</strong> ${this.currentData.metadata.shark_species}</p>

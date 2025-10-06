@@ -13,7 +13,7 @@ import xarray as xr
 
 from models.hsi_model import HSIModel
 from data.nasa_data import NASADataManager
-from utils.geojson_converter import convert_hsi_to_geojson, convert_dataset_to_geojson, convert_hsi_to_geojson_cached, convert_dataset_to_geojson_cached
+from utils.geojson_converter import convert_dataset_to_geojson, convert_hsi_to_geojson_cached, convert_dataset_to_geojson_cached
 from utils.geojson_cache import get_geojson_cache
 from utils.cache_cleanup import run_maintenance_cleanup, cleanup_expired_cache, cleanup_old_cache_by_date, cleanup_cache_by_size
 
@@ -66,30 +66,29 @@ def _get_cached_data(target_date: str, bounds: Optional[Dict]) -> Optional[Dict]
     
     return None
 
-async def _get_overlay_dataset(overlay_type: str, target_date: str, bounds: Optional[Dict]) -> tuple[Optional[xr.Dataset], str]:
+async def _get_overlay_dataset(overlay_type: str, target_date: str) -> tuple[Optional[xr.Dataset], str]:
     """
     Get dataset for overlay, reusing cached data from HSI calculation when possible
-    
+
     Args:
         overlay_type: Type of overlay (chlorophyll, oceanographic, salinity)
         target_date: Target date for data retrieval
-        bounds: Optional geographic bounds
-        
+
     Returns:
         Tuple of (dataset, variable_name)
     """
     # Try to get cached data first
-    datasets = _get_cached_data(target_date, bounds)
-    
+    datasets = _get_cached_data(target_date, None)
+
     if datasets is None:
         # No cached data, fetch using temporal merging
         try:
-            datasets = nasa_manager.get_data_for_date(target_date, bounds)
+            datasets = nasa_manager.get_data_for_date(target_date)
             logger.info(f"Successfully retrieved {overlay_type} data using temporal merging with combined passes for overlay")
         except ValueError as e:
             # Fallback to single dataset if temporal merging fails
             logger.warning(f"Failed to get {overlay_type} data using temporal merging: {e}. Trying single dataset.")
-            datasets = {overlay_type: nasa_manager.download_data(overlay_type, target_date, bounds)}
+            datasets = {overlay_type: nasa_manager.download_data(overlay_type, target_date)}
     
     if overlay_type == 'chlorophyll':
         dataset = datasets.get('chlorophyll')
@@ -103,7 +102,7 @@ async def _get_overlay_dataset(overlay_type: str, target_date: str, bounds: Opti
             return None, None
             
         # Process the sea level data using the same method as HSI calculation
-        from models.hsi_model import HSIModel
+        from backend.models.hsi_model import HSIModel
         hsi_processor = HSIModel()
         
         # Extract sea level anomaly from temporally merged data (same as HSI calculation)
@@ -135,16 +134,15 @@ async def _get_overlay_dataset(overlay_type: str, target_date: str, bounds: Opti
     
     return dataset, variable
 
-async def _get_overlay_dataset_with_lag(overlay_type: str, target_date: str, bounds: Optional[Dict], lagged_dates: Dict) -> tuple[Optional[xr.Dataset], str]:
+async def _get_overlay_dataset_with_lag(overlay_type: str, target_date: str, lagged_dates: Dict) -> tuple[Optional[xr.Dataset], str]:
     """
     Get dataset for overlay with forced lagged data
-    
+
     Args:
         overlay_type: Type of overlay (chlorophyll, oceanographic, salinity)
         target_date: Target date for data retrieval
-        bounds: Optional geographic bounds
         lagged_dates: Dictionary with lagged dates for each dataset
-        
+
     Returns:
         Tuple of (dataset, variable_name)
     """
@@ -153,7 +151,7 @@ async def _get_overlay_dataset_with_lag(overlay_type: str, target_date: str, bou
             # Use lagged chlorophyll data if available
             if lagged_dates['chlorophyll_lag_days'] > 0:
                 logger.info(f"Fetching lagged chlorophyll data from {lagged_dates['chlorophyll_lag_date']}")
-                dataset = nasa_manager.download_data('chlorophyll', lagged_dates['chlorophyll_lag_date'], bounds)
+                dataset = nasa_manager.download_data('chlorophyll', lagged_dates['chlorophyll_lag_date'])
                 if dataset is not None:
                     logger.info(f"Successfully retrieved lagged chlorophyll data for overlay")
                     return dataset, 'chlorophyll'
@@ -161,17 +159,17 @@ async def _get_overlay_dataset_with_lag(overlay_type: str, target_date: str, bou
                     logger.warning(f"Lagged chlorophyll data not available, falling back to current date")
             
             # Fallback to current date
-            dataset = nasa_manager.download_data('chlorophyll', target_date, bounds)
+            dataset = nasa_manager.download_data('chlorophyll', target_date)
             return dataset, 'chlorophyll'
-            
+
         elif overlay_type == 'oceanographic':
             # Sea level data is always current (no lag)
-            dataset = nasa_manager.download_data('sea_level', target_date, bounds)
+            dataset = nasa_manager.download_data('sea_level', target_date)
             return dataset, 'oceanographic'
-            
+
         elif overlay_type == 'salinity':
             # Salinity data is always current (no lag, but uses hardcoded 2022 date)
-            dataset = nasa_manager.download_data('salinity', target_date, bounds)
+            dataset = nasa_manager.download_data('salinity', target_date)
             return dataset, 'salinity'
             
         else:
@@ -185,24 +183,16 @@ async def _get_overlay_dataset_with_lag(overlay_type: str, target_date: str, bou
 async def get_hotspots(
     target_date: str = Query(..., description="Target date in YYYY-MM-DD format"),
     shark_species: str = Query(..., description="Shark species: 'great_white', 'tiger_shark', or 'bull_shark'"),
-    format: str = Query("geojson", description="Output format: 'geojson' or 'raw'"),
-    north: float = Query(None, description="Northern boundary (latitude)"),
-    south: float = Query(None, description="Southern boundary (latitude)"),
-    east: float = Query(None, description="Eastern boundary (longitude)"),
-    west: float = Query(None, description="Western boundary (longitude)")
+    format: str = Query("geojson", description="Output format: 'geojson' or 'raw'")
 ):
     """
     Get shark foraging hotspots for a specific date and species
-    
+
     Args:
         target_date: Date in YYYY-MM-DD format
         shark_species: Species identifier
         format: Output format (geojson or raw)
-        north: Northern boundary (latitude) for geographic filtering
-        south: Southern boundary (latitude) for geographic filtering
-        east: Eastern boundary (longitude) for geographic filtering
-        west: Western boundary (longitude) for geographic filtering
-    
+
     Returns:
         GeoJSON or raw HSI data
     """
@@ -219,26 +209,7 @@ async def get_hotspots(
                 detail=f"Invalid shark species. Available: {list(hsi_model.shark_profiles.keys())}"
             )
         
-        logger.info(f"Processing request for {shark_species} on {target_date}")
-        
-        # Validate and apply geographic bounds
-        geographic_bounds = None
-        if all([north, south, east, west]):
-            # # Validate bounds
-            # if not (-90 <= south <= north <= 90):
-            #     raise HTTPException(status_code=400, detail="Invalid latitude bounds")
-            # if not (-180 <= west <= 180 and -180 <= east <= 180):
-            #     raise HTTPException(status_code=400, detail="Invalid longitude bounds")
-            
-            geographic_bounds = {
-                'north': north,
-                'south': south,
-                'east': east,
-                'west': west
-            }
-            logger.info(f"Applying geographic filter: {geographic_bounds}")
-        else:
-            logger.info("No geographic bounds provided, processing global data")
+        logger.info(f"Processing request for {shark_species} on {target_date} - calculating HSI for entire dataset")
         
         # Calculate lagged dates for trophic lag
         lagged_dates = hsi_model.calculate_lagged_dates(target_date, shark_species)
@@ -251,8 +222,8 @@ async def get_hotspots(
         
         # Always fetch sea_level and salinity for current date (no lag)
         try:
-            sea_level_data = nasa_manager.download_data('sea_level', target_date, geographic_bounds)
-            salinity_data = nasa_manager.download_data('salinity', target_date, geographic_bounds)
+            sea_level_data = nasa_manager.download_data('sea_level', target_date)
+            salinity_data = nasa_manager.download_data('salinity', target_date)
             
             if sea_level_data is not None:
                 datasets['sea_level'] = sea_level_data
@@ -274,7 +245,7 @@ async def get_hotspots(
         try:
             if lagged_dates['chlorophyll_lag_days'] > 0:
                 lagged_chlorophyll_data = nasa_manager.download_data(
-                    'chlorophyll', lagged_dates['chlorophyll_lag_date'], geographic_bounds
+                    'chlorophyll', lagged_dates['chlorophyll_lag_date']
                 )
                 if lagged_chlorophyll_data is not None:
                     datasets['chlorophyll'] = lagged_chlorophyll_data
@@ -282,10 +253,10 @@ async def get_hotspots(
                 else:
                     # Fallback to current date chlorophyll
                     logger.warning(f"Could not retrieve lagged chlorophyll data, trying current date")
-                    datasets['chlorophyll'] = nasa_manager.download_data('chlorophyll', target_date, geographic_bounds)
+                    datasets['chlorophyll'] = nasa_manager.download_data('chlorophyll', target_date)
             else:
                 # No lag needed, fetch current date
-                datasets['chlorophyll'] = nasa_manager.download_data('chlorophyll', target_date, geographic_bounds)
+                datasets['chlorophyll'] = nasa_manager.download_data('chlorophyll', target_date)
         except Exception as e:
             logger.error(f"Failed to retrieve chlorophyll data: {e}")
             raise HTTPException(status_code=404, detail=f"Chlorophyll data retrieval failed: {e}")
@@ -294,7 +265,7 @@ async def get_hotspots(
         try:
             if lagged_dates['temperature_lag_days'] > 0:
                 lagged_sst_data = nasa_manager.download_data(
-                    'sst', lagged_dates['temperature_lag_date'], geographic_bounds
+                    'sst', lagged_dates['temperature_lag_date']
                 )
                 if lagged_sst_data is not None:
                     datasets['sst'] = lagged_sst_data
@@ -302,16 +273,16 @@ async def get_hotspots(
                 else:
                     # Fallback to current date SST
                     logger.warning(f"Could not retrieve lagged SST data, trying current date")
-                    datasets['sst'] = nasa_manager.download_data('sst', target_date, geographic_bounds)
+                    datasets['sst'] = nasa_manager.download_data('sst', target_date)
             else:
                 # No lag needed, fetch current date
-                datasets['sst'] = nasa_manager.download_data('sst', target_date, geographic_bounds)
+                datasets['sst'] = nasa_manager.download_data('sst', target_date)
         except Exception as e:
             logger.error(f"Failed to retrieve SST data: {e}")
             raise HTTPException(status_code=404, detail=f"SST data retrieval failed: {e}")
         
         # Cache datasets for overlay reuse
-        _cache_data(target_date, geographic_bounds, datasets)
+        _cache_data(target_date, None, datasets)
         logger.info("All required datasets successfully retrieved with optimized lag-based fetching")
         
         # Validate dataset content (fail-fast check already done above, this is for additional validation)
@@ -350,7 +321,6 @@ async def get_hotspots(
                 salinity_data=datasets['salinity'],
                 shark_species=shark_species,
                 target_date=target_date,
-                geographic_bounds=geographic_bounds,
                 lagged_chlorophyll_data=lagged_chlorophyll_data,
                 lagged_sst_data=lagged_sst_data
             )
@@ -368,10 +338,9 @@ async def get_hotspots(
         if format.lower() == "geojson":
             # Convert to GeoJSON for map visualization with caching
             geojson_data = convert_hsi_to_geojson_cached(
-                hsi_result, 
-                target_date=target_date, 
-                shark_species=shark_species, 
-                geographic_bounds=geographic_bounds
+                hsi_result,
+                target_date=target_date,
+                shark_species=shark_species
             )
             
             response_data = {
@@ -388,8 +357,7 @@ async def get_hotspots(
                         "chlorophyll": lagged_chlorophyll_data is not None,
                         "temperature": lagged_sst_data is not None
                     },
-                    "geographic_bounds": geographic_bounds,
-                    "processing_area": "Viewport" if geographic_bounds else "Global",
+                    "processing_area": "Global",
                     "data_limitations": {
                         "sea_level_coverage": "Enhanced coverage using combined ascending and descending passes, with fallback to gridded data",
                         "missing_data_handling": "NASA-SSH built-in temporal merging within 10-day observation window, dual-pass geometry for improved spatial coverage",
@@ -465,8 +433,7 @@ async def get_hotspots(
                         "chlorophyll": lagged_chlorophyll_data is not None,
                         "temperature": lagged_sst_data is not None
                     },
-                    "geographic_bounds": geographic_bounds,
-                    "processing_area": "Viewport" if geographic_bounds else "Global"
+                    "processing_area": "Global"
                 }
             }
             
@@ -493,19 +460,11 @@ async def get_overlay_data(
     overlay_type: str,
     target_date: str = Query(..., description="Target date in YYYY-MM-DD format"),
     shark_species: str = Query("tiger_shark", description="Shark species for lag calculation"),
-    geographic_bounds: Optional[str] = Query(None, description="Geographic bounds as JSON string"),
     threshold: float = Query(0.0, description="Minimum value threshold for data inclusion"),
     density_factor: int = Query(4, description="Density reduction factor (higher = less dense, default 4)")
 ):
     """Get overlay data for visualization"""
     try:
-        # Parse geographic bounds if provided
-        bounds = None
-        if geographic_bounds:
-            try:
-                bounds = json.loads(geographic_bounds)
-            except json.JSONDecodeError:
-                raise HTTPException(status_code=400, detail="Invalid geographic bounds format")
         
         # Validate overlay type
         valid_overlays = ['chlorophyll', 'oceanographic', 'salinity']
@@ -517,19 +476,18 @@ async def get_overlay_data(
         logger.info(f"Overlay lagged dates for {overlay_type}: {lagged_dates}")
         
         # Get dataset with lagged data
-        dataset, variable = await _get_overlay_dataset_with_lag(overlay_type, target_date, bounds, lagged_dates)
+        dataset, variable = await _get_overlay_dataset_with_lag(overlay_type, target_date, lagged_dates)
         
         if dataset is None:
             raise HTTPException(status_code=404, detail=f"No data available for {overlay_type} on {target_date}")
         
         # Convert to GeoJSON with density reduction and caching
         geojson_data = convert_dataset_to_geojson_cached(
-            dataset, 
-            variable, 
-            target_date=target_date, 
-            overlay_type=overlay_type, 
-            geographic_bounds=bounds, 
-            threshold=threshold, 
+            dataset,
+            variable,
+            target_date=target_date,
+            overlay_type=overlay_type,
+            threshold=threshold,
             density_factor=density_factor
         )
         
@@ -543,7 +501,6 @@ async def get_overlay_data(
                 "threshold": threshold,
                 "density_factor": density_factor,
                 "feature_count": len(geojson_data),
-                "geographic_bounds": bounds,
                 "data_source": "NASA Earthdata"
             }
         }
@@ -620,15 +577,11 @@ async def check_sea_level_availability(
 
 @router.get("/along-track-data")
 async def get_along_track_data(
-    target_date: str = Query(..., description="Target date in YYYY-MM-DD format"),
-    north: float = Query(None, description="Northern boundary (latitude)"),
-    south: float = Query(None, description="Southern boundary (latitude)"),
-    east: float = Query(None, description="Eastern boundary (longitude)"),
-    west: float = Query(None, description="Western boundary (longitude)")
+    target_date: str = Query(..., description="Target date in YYYY-MM-DD format")
 ):
     """
     Get NASA-SSH along-track data for higher resolution analysis
-    
+
     Along-track data provides once-per-second sampling with 5-10 km diameter
     nadir measurements, offering higher resolution than gridded products.
     """
@@ -638,20 +591,9 @@ async def get_along_track_data(
             datetime.strptime(target_date, '%Y-%m-%d')
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
-        
-        # Validate and apply geographic bounds
-        geographic_bounds = None
-        if all([north, south, east, west]):
-            geographic_bounds = {
-                'north': north,
-                'south': south,
-                'east': east,
-                'west': west
-            }
-            logger.info(f"Applying geographic filter for along-track data: {geographic_bounds}")
-        
-        # Download along-track data
-        along_track_data = nasa_manager.download_along_track_data(target_date, geographic_bounds)
+
+        # Download along-track data (no geographic filtering)
+        along_track_data = nasa_manager.download_along_track_data(target_date)
         
         if along_track_data is None:
             raise HTTPException(
@@ -661,10 +603,9 @@ async def get_along_track_data(
         
         # Convert to GeoJSON for visualization
         geojson_data = convert_dataset_to_geojson(
-            along_track_data, 
-            'sea_level', 
-            geographic_bounds, 
-            threshold=0.0, 
+            along_track_data,
+            'sea_level',
+            threshold=0.0,
             density_factor=2  # Higher density for along-track data
         )
         
@@ -675,7 +616,6 @@ async def get_along_track_data(
                 "data_type": "along_track",
                 "target_date": target_date,
                 "feature_count": len(geojson_data),
-                "geographic_bounds": geographic_bounds,
                 "data_source": "NASA-SSH Along-Track Data V1",
                 "resolution": "once-per-second sampling, 5-10 km diameter",
                 "processing": "19-point Gaussian-like normalized filter",
@@ -702,25 +642,17 @@ async def get_along_track_data(
 
 @router.get("/combined-pass-data")
 async def get_combined_pass_data(
-    target_date: str = Query(..., description="Target date in YYYY-MM-DD format"),
-    north: float = Query(None, description="Northern boundary (latitude)"),
-    south: float = Query(None, description="Southern boundary (latitude)"),
-    east: float = Query(None, description="Eastern boundary (longitude)"),
-    west: float = Query(None, description="Western boundary (longitude)")
+    target_date: str = Query(..., description="Target date in YYYY-MM-DD format")
 ):
     """
     Get NASA-SSH combined ascending and descending pass data for enhanced coverage
-    
+
     This endpoint fetches both ascending and descending pass data and combines them
     to provide improved spatial coverage, particularly in the western hemisphere.
-    
+
     Args:
         target_date: Date in YYYY-MM-DD format
-        north: Northern boundary (latitude) for geographic filtering
-        south: Southern boundary (latitude) for geographic filtering
-        east: Eastern boundary (longitude) for geographic filtering
-        west: Western boundary (longitude) for geographic filtering
-    
+
     Returns:
         GeoJSON representation of combined pass sea level data
     """
@@ -730,15 +662,10 @@ async def get_combined_pass_data(
             datetime.strptime(target_date, '%Y-%m-%d')
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
-        
-        # Build geographic bounds if provided
-        geographic_bounds = None
-        if all(param is not None for param in [north, south, east, west]):
-            geographic_bounds = [west, south, east, north]
-        
-        # Download sea level data
+
+        # Download sea level data (no geographic filtering)
         logger.info(f"Downloading NASA-SSH data for {target_date}")
-        data = nasa_manager.download_data('sea_level', target_date, geographic_bounds)
+        data = nasa_manager.download_data('sea_level', target_date)
         
         if data is None:
             raise HTTPException(
@@ -748,10 +675,9 @@ async def get_combined_pass_data(
         
         # Convert to GeoJSON
         geojson_data = convert_dataset_to_geojson(
-            data, 
-            'sea_level', 
-            geographic_bounds, 
-            threshold=0.0, 
+            data,
+            'sea_level',
+            threshold=0.0,
             density_factor=2  # Higher density for combined pass data
         )
         
@@ -762,7 +688,6 @@ async def get_combined_pass_data(
                 "data_type": "combined_pass",
                 "target_date": target_date,
                 "feature_count": len(geojson_data),
-                "geographic_bounds": geographic_bounds,
                 "data_source": "NASA-SSH Combined Pass Data V1",
                 "resolution": "once-per-second sampling, 5-10 km diameter",
                 "processing": "19-point Gaussian-like normalized filter",

@@ -562,3 +562,72 @@ input[type="checkbox"] {
     color: #3498db;
     font-size: 1.2rem;
 }
+
+.leaflet-popup-content .hsi-components {
+    background: #f8f9fa;
+    padding: 0.75rem;
+    margin: 0.75rem 0;
+    border-radius: 4px;
+    border-left: 3px solid #3498db;
+}
+
+.leaflet-popup-content .hsi-components h4 {
+    color: #2c3e50;
+    margin-bottom: 0.5rem;
+    font-size: 0.9rem;
+    font-weight: 600;
+}
+
+.leaflet-popup-content .hsi-components p {
+    margin-bottom: 0.25rem;
+    font-size: 0.85rem;
+    display: flex;
+    justify-content: space-between;
+}
+
+.leaflet-popup-content .hsi-components strong {
+    color: #2c3e50;
+    min-width: 80px;
+}
+
+.leaflet-popup-content .component-grid {
+    display: grid;
+    gap: 0.25rem;
+    margin-bottom: 0.5rem;
+}
+
+.leaflet-popup-content .component-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.125rem 0;
+}
+
+.leaflet-popup-content .component-label {
+    font-weight: 500;
+    color: #2c3e50;
+    font-size: 0.8rem;
+}
+
+.leaflet-popup-content .component-value {
+    font-weight: 600;
+    color: #3498db;
+    font-size: 0.8rem;
+    margin-left: 0.5rem;
+}
+
+.leaflet-popup-content .component-contrib {
+    font-size: 0.7rem;
+    color: #7f8c8d;
+    font-weight: 400;
+    margin-left: 0.25rem;
+}
+
+.leaflet-popup-content .contribution-note {
+    font-size: 0.7rem;
+    color: #7f8c8d;
+    font-style: italic;
+    margin-top: 0.25rem;
+    padding-top: 0.25rem;
+    border-top: 1px solid #ecf0f1;
+}

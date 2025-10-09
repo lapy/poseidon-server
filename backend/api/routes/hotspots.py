@@ -13,6 +13,7 @@ import xarray as xr
 
 from models.hsi_model import HSIModel
 from data.nasa_data import NASADataManager
+from data.gfw_data import GFWDataManager
 from utils.geojson_converter import convert_dataset_to_geojson, convert_hsi_to_geojson_cached, convert_dataset_to_geojson_cached
 from utils.geojson_cache import get_geojson_cache
 from utils.cache_cleanup import run_maintenance_cleanup, cleanup_expired_cache, cleanup_old_cache_by_date, cleanup_cache_by_size
@@ -24,6 +25,7 @@ router = APIRouter()
 # Initialize models
 hsi_model = HSIModel()
 nasa_manager = NASADataManager()
+gfw_manager = GFWDataManager()
 
 # Global cache for shared data between HSI and overlays
 _data_cache = {}
@@ -66,124 +68,12 @@ def _get_cached_data(target_date: str, bounds: Optional[Dict]) -> Optional[Dict]
     
     return None
 
-async def _get_overlay_dataset(overlay_type: str, target_date: str) -> tuple[Optional[xr.Dataset], str]:
-    """
-    Get dataset for overlay, reusing cached data from HSI calculation when possible
-
-    Args:
-        overlay_type: Type of overlay (chlorophyll, oceanographic, salinity)
-        target_date: Target date for data retrieval
-
-    Returns:
-        Tuple of (dataset, variable_name)
-    """
-    # Try to get cached data first
-    datasets = _get_cached_data(target_date, None)
-
-    if datasets is None:
-        # No cached data, fetch using temporal merging
-        try:
-            datasets = nasa_manager.get_data_for_date(target_date)
-            logger.info(f"Successfully retrieved {overlay_type} data using temporal merging with combined passes for overlay")
-        except ValueError as e:
-            # Fallback to single dataset if temporal merging fails
-            logger.warning(f"Failed to get {overlay_type} data using temporal merging: {e}. Trying single dataset.")
-            datasets = {overlay_type: nasa_manager.download_data(overlay_type, target_date)}
-    
-    if overlay_type == 'chlorophyll':
-        dataset = datasets.get('chlorophyll')
-        variable = 'chlorophyll'
-        
-    elif overlay_type == 'oceanographic':
-        # For oceanographic overlay, process sea level data using HSI method
-        # Use the same merged sea level data that HSI calculation uses
-        sea_level_data = datasets.get('sea_level')
-        if sea_level_data is None:
-            return None, None
-            
-        # Process the sea level data using the same method as HSI calculation
-        from backend.models.hsi_model import HSIModel
-        hsi_processor = HSIModel()
-        
-        # Extract sea level anomaly from temporally merged data (same as HSI calculation)
-        # The data uses NASA-SSH's built-in temporal merging within the 10-day observation window
-        sla_data = sea_level_data['sea_level']
-        processed_oceanographic = hsi_processor._normalize_sea_level_anomaly(sla_data)
-        
-        # Check coverage statistics
-        sea_level_nan_count = np.isnan(processed_oceanographic).sum().values
-        total_points = processed_oceanographic.size
-        if sea_level_nan_count > 0:
-            logger.info(f"Oceanographic overlay: {sea_level_nan_count}/{total_points} points still missing ({100*sea_level_nan_count/total_points:.1f}%) after temporal merging")
-        
-        # Create a dataset with the processed oceanographic suitability
-        dataset = xr.Dataset({
-            'oceanographic': processed_oceanographic
-        })
-        variable = 'oceanographic'
-        
-    elif overlay_type == 'salinity':
-        dataset = datasets.get('salinity')
-        variable = 'salinity'  # Sea Surface Salinity variable name (renamed during processing)
-    
-    else:
-        return None, None
-    
-    if dataset is None:
-        raise HTTPException(status_code=404, detail=f"No {overlay_type} data available for overlay on {target_date}")
-    
-    return dataset, variable
-
-async def _get_overlay_dataset_with_lag(overlay_type: str, target_date: str, lagged_dates: Dict) -> tuple[Optional[xr.Dataset], str]:
-    """
-    Get dataset for overlay with forced lagged data
-
-    Args:
-        overlay_type: Type of overlay (chlorophyll, oceanographic, salinity)
-        target_date: Target date for data retrieval
-        lagged_dates: Dictionary with lagged dates for each dataset
-
-    Returns:
-        Tuple of (dataset, variable_name)
-    """
-    try:
-        if overlay_type == 'chlorophyll':
-            # Use lagged chlorophyll data if available
-            if lagged_dates['chlorophyll_lag_days'] > 0:
-                logger.info(f"Fetching lagged chlorophyll data from {lagged_dates['chlorophyll_lag_date']}")
-                dataset = nasa_manager.download_data('chlorophyll', lagged_dates['chlorophyll_lag_date'])
-                if dataset is not None:
-                    logger.info(f"Successfully retrieved lagged chlorophyll data for overlay")
-                    return dataset, 'chlorophyll'
-                else:
-                    logger.warning(f"Lagged chlorophyll data not available, falling back to current date")
-            
-            # Fallback to current date
-            dataset = nasa_manager.download_data('chlorophyll', target_date)
-            return dataset, 'chlorophyll'
-
-        elif overlay_type == 'oceanographic':
-            # Sea level data is always current (no lag)
-            dataset = nasa_manager.download_data('sea_level', target_date)
-            return dataset, 'oceanographic'
-
-        elif overlay_type == 'salinity':
-            # Salinity data is always current (no lag, but uses hardcoded 2022 date)
-            dataset = nasa_manager.download_data('salinity', target_date)
-            return dataset, 'salinity'
-            
-        else:
-            return None, None
-            
-    except Exception as e:
-        logger.error(f"Failed to fetch {overlay_type} data for overlay: {e}")
-        return None, None
-
 @router.get("/hotspots")
 async def get_hotspots(
     target_date: str = Query(..., description="Target date in YYYY-MM-DD format"),
     shark_species: str = Query(..., description="Shark species: 'great_white', 'tiger_shark', or 'bull_shark'"),
-    format: str = Query("geojson", description="Output format: 'geojson' or 'raw'")
+    format: str = Query("geojson", description="Output format: 'geojson' or 'raw'"),
+    threshold: float = Query(0.0, description="Minimum HSI threshold for inclusion (0.0-1.0, default 0.0 returns all grid points)")
 ):
     """
     Get shark foraging hotspots for a specific date and species
@@ -285,6 +175,38 @@ async def get_hotspots(
         _cache_data(target_date, None, datasets)
         logger.info("All required datasets successfully retrieved with optimized lag-based fetching")
         
+        # Fetch anthropogenic pressure data (GFW)
+        logger.info("--- Fetching Anthropogenic Pressure Data (GFW) ---")
+        fishing_pressure_data = None
+        shipping_density_data = None
+        gfw_data_available = {'fishing': False, 'shipping': False}
+        
+        try:
+            # Fetch fishing pressure data
+            fishing_pressure_data = gfw_manager.fetch_fishing_effort(target_date, target_date)
+            if fishing_pressure_data is not None:
+                gfw_data_available['fishing'] = True
+                logger.info("Successfully retrieved fishing pressure data from GFW")
+            else:
+                logger.warning("Fishing pressure data unavailable - using neutral values")
+        except Exception as e:
+            logger.error(f"Error fetching fishing pressure data: {e}")
+            logger.warning("Continuing with neutral fishing pressure")
+        
+        try:
+            # Fetch shipping density data
+            shipping_density_data = gfw_manager.fetch_vessel_density(target_date, target_date)
+            if shipping_density_data is not None:
+                gfw_data_available['shipping'] = True
+                logger.info("Successfully retrieved shipping density data from GFW")
+            else:
+                logger.warning("Shipping density data unavailable - using neutral values")
+        except Exception as e:
+            logger.error(f"Error fetching shipping density data: {e}")
+            logger.warning("Continuing with neutral shipping density")
+        
+        logger.info(f"GFW data availability: fishing={gfw_data_available['fishing']}, shipping={gfw_data_available['shipping']}")
+        
         # Validate dataset content (fail-fast check already done above, this is for additional validation)
         for name, data in datasets.items():
             if name == 'sst' and (not hasattr(data, 'data_vars') or not data.data_vars or 'sst' not in data.data_vars):
@@ -322,7 +244,10 @@ async def get_hotspots(
                 shark_species=shark_species,
                 target_date=target_date,
                 lagged_chlorophyll_data=lagged_chlorophyll_data,
-                lagged_sst_data=lagged_sst_data
+                lagged_sst_data=lagged_sst_data,
+                fishing_pressure_data=fishing_pressure_data,
+                shipping_density_data=shipping_density_data,
+                use_enhanced_model=True
             )
         except ValueError as e:
             logger.error(f"HSI calculation failed: {e}")
@@ -340,7 +265,8 @@ async def get_hotspots(
             geojson_data = convert_hsi_to_geojson_cached(
                 hsi_result,
                 target_date=target_date,
-                shark_species=shark_species
+                shark_species=shark_species,
+                threshold=threshold
             )
             
             response_data = {
@@ -357,6 +283,8 @@ async def get_hotspots(
                         "chlorophyll": lagged_chlorophyll_data is not None,
                         "temperature": lagged_sst_data is not None
                     },
+                    "anthropogenic_data_available": gfw_data_available,
+                    "anthropogenic_data_source": gfw_manager.get_data_attribution(),
                     "processing_area": "Global",
                     "data_limitations": {
                         "sea_level_coverage": "Enhanced coverage using combined ascending and descending passes, with fallback to gridded data",
@@ -433,6 +361,8 @@ async def get_hotspots(
                         "chlorophyll": lagged_chlorophyll_data is not None,
                         "temperature": lagged_sst_data is not None
                     },
+                    "anthropogenic_data_available": gfw_data_available,
+                    "anthropogenic_data_source": gfw_manager.get_data_attribution(),
                     "processing_area": "Global"
                 }
             }
@@ -454,64 +384,6 @@ async def get_shark_species():
     except Exception as e:
         logger.error(f"Error getting shark species: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
-
-@router.get("/overlay/{overlay_type}")
-async def get_overlay_data(
-    overlay_type: str,
-    target_date: str = Query(..., description="Target date in YYYY-MM-DD format"),
-    shark_species: str = Query("tiger_shark", description="Shark species for lag calculation"),
-    threshold: float = Query(0.0, description="Minimum value threshold for data inclusion"),
-    density_factor: int = Query(4, description="Density reduction factor (higher = less dense, default 4)")
-):
-    """Get overlay data for visualization"""
-    try:
-        
-        # Validate overlay type
-        valid_overlays = ['chlorophyll', 'oceanographic', 'salinity']
-        if overlay_type not in valid_overlays:
-            raise HTTPException(status_code=400, detail=f"Invalid overlay type. Must be one of: {valid_overlays}")
-        
-        # Calculate lagged dates for overlay data
-        lagged_dates = hsi_model.calculate_lagged_dates(target_date, shark_species)
-        logger.info(f"Overlay lagged dates for {overlay_type}: {lagged_dates}")
-        
-        # Get dataset with lagged data
-        dataset, variable = await _get_overlay_dataset_with_lag(overlay_type, target_date, lagged_dates)
-        
-        if dataset is None:
-            raise HTTPException(status_code=404, detail=f"No data available for {overlay_type} on {target_date}")
-        
-        # Convert to GeoJSON with density reduction and caching
-        geojson_data = convert_dataset_to_geojson_cached(
-            dataset,
-            variable,
-            target_date=target_date,
-            overlay_type=overlay_type,
-            threshold=threshold,
-            density_factor=density_factor
-        )
-        
-        response_data = {
-            "type": "FeatureCollection",
-            "features": geojson_data,
-            "metadata": {
-                "overlay_type": overlay_type,
-                "variable": variable,
-                "target_date": target_date,
-                "threshold": threshold,
-                "density_factor": density_factor,
-                "feature_count": len(geojson_data),
-                "data_source": "NASA Earthdata"
-            }
-        }
-        
-        return _clean_response_data(response_data)
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Failed to get overlay data for {overlay_type}: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to retrieve {overlay_type} overlay data")
 
 @router.get("/datasets")
 async def get_dataset_info():

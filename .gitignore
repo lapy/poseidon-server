@@ -186,7 +186,7 @@ $RECYCLE.BIN/
 
 # Project-specific ignores
 # NASA data cache files (these are large and can be regenerated)
-backend/data_cache/
+*data_cache/
 *.nc
 
 # Temporary files
@@ -216,7 +216,6 @@ frontend/build/
 frontend/node_modules/
 
 # API documentation
-docs/
 api_docs/
 
 # Backup files

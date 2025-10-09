@@ -91,10 +91,10 @@ Where:
 - $f_C$: Chlorophyll suitability (food web foundation)
 - $f_E$: Combined eddy and front suitability (prey concentration)
 - $f_S$: Temperature suitability (habitat filter)
-- $w_C, w_E, w_S$: Species-specific weights
+- $w_C$, $w_E$, $w_S$: Species-specific weights
 
 ### Ecological Principles
-- **Bottom-Up Control**: Phytoplankton → zooplankton → fish → sharks
+- **Bottom-Up Control**: Phytoplankton $\rightarrow$ zooplankton $\rightarrow$ fish $\rightarrow$ sharks
 - **Top-Down Effects**: Shark presence indicating healthy ecosystems
 - **Temporal Dynamics**: Lag effects in ecological responses
 - **Spatial Patterns**: Mesoscale oceanographic features driving distribution

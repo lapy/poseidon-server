@@ -30,7 +30,7 @@ class NASADataManager:
         if cache_dir is None:
             cache_dir = os.getenv("CACHE_DIR", "data_cache")
         self.cache_dir = Path(cache_dir)
-        self.cache_dir.mkdir(exist_ok=True)
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
         
         # NASA dataset configurations
         self.datasets = {
@@ -57,17 +57,32 @@ class NASADataManager:
                 'description': 'OISSS L4 Sea Surface Salinity',
                 'variable': 'salinity',
                 'units': 'psu'
-            }
+            },
+            'npp': {
+                'short_name': 'VIIRSN_L3m_NPP',
+                'description': 'VIIRS Ocean Net Primary Productivity',
+                'variable': 'npp',
+                'units': 'mg C m^-2 day^-1',
+                'note': 'Ocean primary productivity - better prey availability indicator than chlorophyll alone'
+            },
+            # NOTE: The following datasets are NOT available from NASA Earthdata
+            # They are obtained from other specialized data sources
+            # 
+            # 'oxygen': ✅ Derived from SST and salinity using Garcia-Gordon equation (IMPLEMENTED)
+            # 'fishing_pressure': ✅ Global Fishing Watch API via gfw-api-python-client (IMPLEMENTED)
+            # 'shipping_density': ✅ Global Fishing Watch AIS vessel presence data (IMPLEMENTED)
+            # 'bathymetry': ⚠️ Requires ETOPO/GEBCO static download (planned - uses neutral values)
+            # 'prey_density': ⚠️ Requires NOAA/USGS tracking data (planned - uses chlorophyll proxy)
         }
         
         # Global grid parameters
-        self.grid_resolution = 0.25  # degrees
+        self.grid_resolution = 0.5  # degrees (matches SSH dataset resolution)
         self.lat_range = (-90, 90)
         self.lon_range = (-180, 180)
         
         
         # Automatically authenticate with NASA Earthdata
-        self._auto_authenticate()
+        # self._auto_authenticate()
     
     def _auto_authenticate(self):
         """Automatically authenticate with NASA Earthdata"""
@@ -295,7 +310,7 @@ class NASADataManager:
             
             # Download to temporary location
             temp_dir = self.cache_dir / "temp"
-            temp_dir.mkdir(exist_ok=True)
+            temp_dir.mkdir(parents=True, exist_ok=True)
             
             logger.info(f"Downloading to: {temp_dir}")
             files = earthaccess.download([granule], local_path=str(temp_dir))
@@ -340,6 +355,10 @@ class NASADataManager:
                 return self._process_sst(data)
             elif dataset == 'salinity':
                 return self._process_salinity(data)
+            elif dataset == 'npp':
+                return self._process_npp(data)
+            # Note: oxygen, bathymetry, fishing_pressure, and shipping_density
+            # are not available from NASA Earthdata
             else:
                 return data
         except Exception as e:
@@ -731,6 +750,361 @@ class NASADataManager:
             logger.error(f"OISSS L4 salinity processing failed: {e}")
             return data
     
+    def _process_npp(self, data: xr.Dataset) -> xr.Dataset:
+        """
+        Process VIIRS Net Primary Productivity data
+        
+        NPP is ocean primary productivity - a better indicator of prey availability
+        than chlorophyll alone as it represents actual carbon fixation rate.
+        """
+        try:
+            logger.info("Processing VIIRS NPP data")
+            
+            # Find NPP variable (can have different names)
+            npp_var = None
+            for var in ['npp', 'net_primary_productivity', 'carbon_phyto']:
+                if var in data.data_vars:
+                    npp_var = var
+                    break
+            
+            if npp_var is None:
+                raise ValueError(f"NPP variable not found in dataset. Available: {list(data.data_vars)}")
+            
+            logger.info(f"Found NPP variable: {npp_var}")
+            npp_data = data[npp_var]
+            
+            # Handle fill values
+            if hasattr(npp_data, '_FillValue'):
+                npp_data = npp_data.where(npp_data != npp_data._FillValue)
+            
+            # Remove negative/unrealistic values (NPP should be positive)
+            npp_data = npp_data.where(npp_data >= 0)
+            
+            # Create standardized dataset
+            processed = xr.Dataset({
+                'npp': npp_data
+            })
+            
+            processed.attrs.update({
+                'source': 'VIIRS Ocean Net Primary Productivity',
+                'variable': npp_var,
+                'units': 'mg C m^-2 day^-1'
+            })
+            
+            # Regrid to common grid
+            regridded = self._regrid_to_common_grid(processed, 'npp')
+            
+            logger.info(f"NPP data successfully processed and regridded")
+            return regridded
+            
+        except Exception as e:
+            logger.error(f"NPP data processing failed: {e}")
+            return data
+    
+    def _process_oxygen(self, data: xr.Dataset) -> xr.Dataset:
+        """
+        Process dissolved oxygen data or derive from temperature/salinity
+        
+        Since direct satellite measurements of dissolved oxygen are limited,
+        we use empirical relationships based on temperature and salinity when needed.
+        This implements the Garcia-Gordon equation for oxygen solubility.
+        """
+        try:
+            logger.info(f"Processing oxygen data. Available variables: {list(data.data_vars)}")
+            
+            # Check if oxygen data is directly available
+            oxygen_vars = ['oxygen', 'dissolved_oxygen', 'do', 'o2']
+            oxygen_var = None
+            
+            for var in oxygen_vars:
+                if var in data.data_vars:
+                    oxygen_var = var
+                    break
+            
+            if oxygen_var is not None:
+                # Direct oxygen measurements available
+                logger.info(f"Found direct oxygen measurements: {oxygen_var}")
+                oxygen_data = data[oxygen_var]
+                
+                # Handle fill values
+                if hasattr(oxygen_data, 'fill_value'):
+                    oxygen_data = oxygen_data.where(oxygen_data != oxygen_data.fill_value)
+                
+                # Remove negative values (not physically meaningful)
+                oxygen_data = oxygen_data.where(oxygen_data >= 0)
+                
+                # Typical ocean oxygen range: 0-15 mg/L
+                oxygen_data = oxygen_data.where((oxygen_data >= 0) & (oxygen_data <= 15))
+                
+            else:
+                # Derive oxygen from temperature (SST) using simplified Garcia-Gordon equation
+                logger.info("No direct oxygen measurements; deriving from temperature")
+                logger.warning("Using simplified oxygen estimation - results are approximate")
+                
+                # This is a fallback that creates a synthetic oxygen field
+                # In practice, you would want actual oxygen data or a more sophisticated model
+                # For now, we'll return None to indicate oxygen data is not available
+                logger.error("Oxygen derivation not fully implemented - returning None")
+                return None
+            
+            # Create standardized dataset
+            processed = xr.Dataset({
+                'oxygen': oxygen_data
+            })
+            
+            # Add essential metadata
+            processed.attrs.update({
+                'source': 'Multi-Mission Ocean Color or Derived',
+                'variable': oxygen_var if oxygen_var else 'derived',
+                'units': 'mg/L'
+            })
+            
+            # Regrid to common grid
+            return self._regrid_to_common_grid(processed, 'oxygen')
+            
+        except Exception as e:
+            logger.error(f"Oxygen processing failed: {e}")
+            return None
+    
+    def derive_oxygen_from_temp_salinity(self, sst_data: xr.Dataset, salinity_data: xr.Dataset) -> xr.Dataset:
+        """
+        Derive dissolved oxygen concentration from SST and salinity using Garcia-Gordon equations
+        
+        This implements a simplified version of the Garcia & Gordon (1992) oxygen solubility model.
+        Reference: Garcia, H. E., & Gordon, L. I. (1992). Oxygen solubility in seawater:
+        Better fitting equations. Limnology and Oceanography, 37(6), 1307-1312.
+        
+        Args:
+            sst_data: Sea surface temperature dataset (°C)
+            salinity_data: Sea surface salinity dataset (psu)
+            
+        Returns:
+            Dissolved oxygen dataset (mg/L)
+        """
+        try:
+            logger.info("Deriving dissolved oxygen from temperature and salinity using Garcia-Gordon equations")
+            
+            # Extract temperature and salinity
+            temp = sst_data['sst']  # Celsius
+            sal = salinity_data['salinity']  # psu
+            
+            # Convert temperature to Kelvin scaled variable
+            T_s = np.log((298.15 - temp) / (273.15 + temp))
+            
+            # Garcia-Gordon coefficients for oxygen solubility in seawater
+            A0 = 2.00856
+            A1 = 3.22400
+            A2 = 3.99063
+            A3 = 4.80299
+            A4 = 9.78188e-1
+            A5 = 1.71069
+            B0 = -6.24097e-3
+            B1 = -6.93498e-3
+            B2 = -6.90358e-3
+            B3 = -4.29155e-3
+            C0 = -3.11680e-7
+            
+            # Calculate oxygen solubility (mL/L)
+            ln_C = (A0 + A1*T_s + A2*T_s**2 + A3*T_s**3 + A4*T_s**4 + A5*T_s**5 +
+                   sal * (B0 + B1*T_s + B2*T_s**2 + B3*T_s**3) + C0*sal**2)
+            
+            # Convert from mL/L to mg/L (multiply by 1.42905 for O2 density)
+            oxygen_solubility = np.exp(ln_C) * 1.42905
+            
+            # Assume 100% saturation for surface waters (can be adjusted based on region)
+            # In reality, saturation varies from 80-120% depending on biological activity
+            oxygen_concentration = oxygen_solubility * 1.0  # 100% saturation
+            
+            # Ensure realistic values (0-15 mg/L for ocean surface waters)
+            oxygen_concentration = oxygen_concentration.clip(0, 15)
+            
+            # Create dataset
+            oxygen_dataset = xr.Dataset({
+                'oxygen': oxygen_concentration
+            })
+            
+            oxygen_dataset.attrs.update({
+                'source': 'Derived from SST and Salinity using Garcia-Gordon (1992)',
+                'variable': 'oxygen_derived',
+                'units': 'mg/L',
+                'saturation': '100%',
+                'note': 'Estimated oxygen concentration assuming 100% saturation'
+            })
+            
+            logger.info("Successfully derived dissolved oxygen from temperature and salinity")
+            return oxygen_dataset
+            
+        except Exception as e:
+            logger.error(f"Oxygen derivation failed: {e}")
+            return None
+    
+    def _process_bathymetry(self, data: xr.Dataset) -> xr.Dataset:
+        """
+        Process GEBCO bathymetry data
+        
+        GEBCO provides global bathymetry and elevation data. Negative values
+        indicate depth below sea level, positive values indicate elevation above.
+        """
+        try:
+            logger.info(f"Processing bathymetry data. Available variables: {list(data.data_vars)}")
+            
+            # GEBCO uses 'elevation' as the primary variable
+            bathy_vars = ['elevation', 'depth', 'bathymetry', 'z']
+            bathy_var = None
+            
+            for var in bathy_vars:
+                if var in data.data_vars:
+                    bathy_var = var
+                    break
+            
+            if bathy_var is None:
+                logger.error(f"Bathymetry variable not found. Available: {list(data.data_vars)}")
+                return None
+            
+            logger.info(f"Found bathymetry variable: {bathy_var}")
+            bathy_data = data[bathy_var]
+            
+            # Handle fill values
+            if hasattr(bathy_data, 'fill_value'):
+                bathy_data = bathy_data.where(bathy_data != bathy_data.fill_value)
+            
+            # Convert elevation to depth (negative elevation = depth below sea level)
+            # For ocean areas, we want positive depth values
+            depth_data = -bathy_data.where(bathy_data < 0, 0)  # Only ocean areas
+            
+            # Calculate seafloor slope (gradient magnitude)
+            if 'lat' in depth_data.dims and 'lon' in depth_data.dims:
+                grad_lat = depth_data.differentiate('lat')
+                grad_lon = depth_data.differentiate('lon')
+                slope_radians = np.arctan(np.sqrt(grad_lat**2 + grad_lon**2))
+                slope_degrees = np.degrees(slope_radians)
+            else:
+                # If dimensions not available, create zero slope
+                slope_degrees = xr.zeros_like(depth_data)
+            
+            # Create standardized dataset with both depth and slope
+            processed = xr.Dataset({
+                'depth': depth_data,
+                'slope': slope_degrees
+            })
+            
+            # Add metadata
+            processed.attrs.update({
+                'source': 'GEBCO Global Bathymetry and Elevation',
+                'depth_units': 'm',
+                'slope_units': 'degrees',
+                'note': 'Static bathymetric data'
+            })
+            
+            # Regrid to common grid
+            return self._regrid_to_common_grid(processed, 'bathymetry')
+            
+        except Exception as e:
+            logger.error(f"Bathymetry processing failed: {e}")
+            return None
+    
+    def _process_fishing_pressure(self, data: xr.Dataset) -> xr.Dataset:
+        """
+        Process Global Fishing Watch fishing pressure data
+        
+        Represents fishing effort (hours) from AIS vessel tracking data.
+        Higher values indicate greater anthropogenic pressure from fishing.
+        """
+        try:
+            logger.info(f"Processing fishing pressure data. Available variables: {list(data.data_vars)}")
+            
+            fishing_vars = ['fishing_hours', 'fishing_effort', 'effort', 'hours']
+            fishing_var = None
+            
+            for var in fishing_vars:
+                if var in data.data_vars:
+                    fishing_var = var
+                    break
+            
+            if fishing_var is None:
+                logger.error(f"Fishing variable not found. Available: {list(data.data_vars)}")
+                return None
+            
+            logger.info(f"Found fishing pressure variable: {fishing_var}")
+            fishing_data = data[fishing_var]
+            
+            # Handle fill values
+            if hasattr(fishing_data, 'fill_value'):
+                fishing_data = fishing_data.where(fishing_data != fishing_data.fill_value)
+            
+            # Remove negative values
+            fishing_data = fishing_data.where(fishing_data >= 0)
+            
+            # Create standardized dataset
+            processed = xr.Dataset({
+                'fishing_pressure': fishing_data
+            })
+            
+            # Add metadata
+            processed.attrs.update({
+                'source': 'Global Fishing Watch',
+                'variable': fishing_var,
+                'units': 'hours'
+            })
+            
+            # Regrid to common grid
+            return self._regrid_to_common_grid(processed, 'fishing_pressure')
+            
+        except Exception as e:
+            logger.error(f"Fishing pressure processing failed: {e}")
+            return None
+    
+    def _process_shipping_density(self, data: xr.Dataset) -> xr.Dataset:
+        """
+        Process AIS vessel traffic density data
+        
+        Represents shipping density from AIS tracking data.
+        Higher values indicate greater anthropogenic pressure from shipping.
+        """
+        try:
+            logger.info(f"Processing shipping density data. Available variables: {list(data.data_vars)}")
+            
+            shipping_vars = ['vessel_count', 'ship_density', 'vessel_density', 'ais_count']
+            shipping_var = None
+            
+            for var in shipping_vars:
+                if var in data.data_vars:
+                    shipping_var = var
+                    break
+            
+            if shipping_var is None:
+                logger.error(f"Shipping variable not found. Available: {list(data.data_vars)}")
+                return None
+            
+            logger.info(f"Found shipping density variable: {shipping_var}")
+            shipping_data = data[shipping_var]
+            
+            # Handle fill values
+            if hasattr(shipping_data, 'fill_value'):
+                shipping_data = shipping_data.where(shipping_data != shipping_data.fill_value)
+            
+            # Remove negative values
+            shipping_data = shipping_data.where(shipping_data >= 0)
+            
+            # Create standardized dataset
+            processed = xr.Dataset({
+                'shipping_density': shipping_data
+            })
+            
+            # Add metadata
+            processed.attrs.update({
+                'source': 'AIS Marine Traffic Data',
+                'variable': shipping_var,
+                'units': 'vessel_count'
+            })
+            
+            # Regrid to common grid
+            return self._regrid_to_common_grid(processed, 'shipping_density')
+            
+        except Exception as e:
+            logger.error(f"Shipping density processing failed: {e}")
+            return None
+    
     def _regrid_to_common_grid(self, data: xr.Dataset, var_name: str) -> xr.Dataset:
         """Regrid data to common global grid"""
         try:
@@ -812,7 +1186,6 @@ class NASADataManager:
         
         Args:
             target_date: Date in YYYY-MM-DD format
-            geographic_bounds: Optional geographic bounds for filtering
         
         Raises ValueError if any required dataset cannot be retrieved.
         """
@@ -824,7 +1197,7 @@ class NASADataManager:
         
         for dataset_name, config in self.datasets.items():
             logger.info(f"Fetching {config['description']} for {target_date}")
-            data = self.download_data(dataset_name, target_date, geographic_bounds)
+            data = self.download_data(dataset_name, target_date)
             datasets[dataset_name] = data
             
             if data is None:
@@ -933,14 +1306,13 @@ class NASADataManager:
         
         Args:
             target_date: Date in YYYY-MM-DD format
-            geographic_bounds: Optional geographic bounds for filtering
             pass_type: Optional pass type filter ('ascending', 'descending', or None for both)
         """
         try:
             logger.info(f"Downloading NASA-SSH gridded data for {target_date}")
             
             # Use the standard gridded data download
-            gridded_data = self.download_data('sea_level', target_date, geographic_bounds)
+            gridded_data = self.download_data('sea_level', target_date)
             
             if gridded_data is not None:
                 # Add metadata to indicate this is gridded data

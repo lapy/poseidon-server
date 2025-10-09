@@ -44,7 +44,7 @@ Ocean eddies are circular currents of water that can span 50-300 kilometers in d
 ### Mathematical Implementation
 
 ```math
-f_{eddy} = \exp\left(-\frac{E'^2}{2\sigma^2}\right)
+f_{\text{eddy}} = \exp\left(-\frac{E'^2}{2\sigma^2}\right)
 ```
 
 Where:
@@ -71,7 +71,10 @@ Ocean fronts are sharp boundaries between different water masses characterized b
 
 #### 1. Dynamic Fronts (SSH Gradients)
 - **Detection Method**: Spatial gradient analysis of Sea Level Anomaly
-- **Formula**: $|\nabla SLA| = \sqrt{\left(\frac{\partial SLA}{\partial lat}\right)^2 + \left(\frac{\partial SLA}{\partial lon}\right)^2}$
+- **Formula**: 
+```math
+|\nabla \text{SLA}| = \sqrt{\left(\frac{\partial \text{SLA}}{\partial \text{lat}}\right)^2 + \left(\frac{\partial \text{SLA}}{\partial \text{lon}}\right)^2}
+```
 - **Characteristics**: Sharp boundaries between different water masses
 - **Ecological Role**: Convergence zones where prey concentrates
 
@@ -83,12 +86,12 @@ Ocean fronts are sharp boundaries between different water masses characterized b
 ### Mathematical Implementation
 
 ```math
-f_{front} = \exp\left(-\frac{|\nabla SLA|}{\sigma_{front}}\right)
+f_{\text{front}} = \exp\left(-\frac{|\nabla \text{SLA}|}{\sigma_{\text{front}}}\right)
 ```
 
 Where:
-- $|\nabla SLA|$ = Gradient magnitude (m/degree)
-- $\sigma_{front} = 0.05$ m/degree (threshold for significant fronts)
+- $|\nabla \text{SLA}|$ = Gradient magnitude (m/degree)
+- $\sigma_{\text{front}} = 0.05$ m/degree (threshold for significant fronts)
 
 **Key Parameters:**
 - **Gradient Threshold**: >0.05 m/degree indicates significant fronts
@@ -100,12 +103,12 @@ Where:
 ### Integration Formula
 
 ```math
-f_E = 0.6 \times f_{eddy} + 0.4 \times f_{front}
+f_E = 0.6 \times f_{\text{eddy}} + 0.4 \times f_{\text{front}}
 ```
 
 Where:
-- $f_{eddy}$ = Eddy suitability (0-1 scale)
-- $f_{front}$ = Front suitability (0-1 scale)
+- $f_{\text{eddy}}$ = Eddy suitability (0-1 scale)
+- $f_{\text{front}}$ = Front suitability (0-1 scale)
 - $f_E$ = Combined oceanographic suitability
 
 ### Weighting Rationale

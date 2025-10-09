@@ -15,8 +15,7 @@ build/
 *.egg
 
 # Data cache files (these can be large)
-data_cache/
-backend/data_cache/
+*data_cache/
 *.nc
 
 # IDE and editor files

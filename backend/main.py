@@ -5,6 +5,7 @@ Main FastAPI application entry point
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 import uvicorn
@@ -33,6 +34,14 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+)
+
+# Enable gzip compression for large responses (like GeoJSON with 259k features)
+# This can reduce 153 MB response to ~15-30 MB
+app.add_middleware(
+    GZipMiddleware,
+    minimum_size=1000,  # Only compress responses larger than 1KB
+    compresslevel=6  # Compression level 1-9 (6 is good balance of speed/size)
 )
 
 # Include API routes

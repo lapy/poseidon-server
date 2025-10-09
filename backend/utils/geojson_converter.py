@@ -42,7 +42,20 @@ def convert_hsi_to_geojson_cached(hsi_data: xr.Dataset, target_date: str, shark_
     
     # Generate features if not cached
     logger.info(f"Generating new HSI GeoJSON features for {shark_species} on {target_date}")
+    
+    # Log HSI statistics before conversion
+    if 'hsi' in hsi_data.data_vars:
+        hsi_values = hsi_data['hsi'].values
+        valid_values = hsi_values[~np.isnan(hsi_values)]
+        if len(valid_values) > 0:
+            logger.info(f"HSI stats: min={valid_values.min():.3f}, max={valid_values.max():.3f}, mean={valid_values.mean():.3f}")
+            above_threshold = np.sum(valid_values >= threshold)
+            logger.info(f"Values >= threshold ({threshold}): {above_threshold}/{len(valid_values)} ({100*above_threshold/len(valid_values):.1f}%)")
+        else:
+            logger.warning("No valid HSI values found (all NaN)")
+    
     features = convert_hsi_to_geojson(hsi_data, threshold, shark_species)
+    logger.info(f"Converted to {len(features)} GeoJSON features")
     
     # Cache the results
     cache_manager.cache_features(
@@ -57,7 +70,7 @@ def convert_hsi_to_geojson_cached(hsi_data: xr.Dataset, target_date: str, shark_
 
 def convert_hsi_to_geojson(hsi_data: xr.Dataset, threshold: float = 0.5, shark_species: str = None) -> List[Dict[str, Any]]:
     """
-    Convert HSI data to GeoJSON format for map visualization
+    Convert HSI data to GeoJSON format for map visualization (OPTIMIZED)
 
     Args:
         hsi_data: HSI dataset with lat, lon, and hsi values
@@ -68,98 +81,123 @@ def convert_hsi_to_geojson(hsi_data: xr.Dataset, threshold: float = 0.5, shark_s
         List of GeoJSON features
     """
     try:
+        # Extract coordinates
+        lats = hsi_data['hsi'].lat.values
+        lons = hsi_data['hsi'].lon.values
+        
+        # Pre-compute grid steps
+        lat_step = lats[1] - lats[0] if len(lats) > 1 else 0.5
+        lon_step = lons[1] - lons[0] if len(lons) > 1 else 0.5
+        
+        # Extract ALL arrays at once (MAJOR SPEEDUP - no repeated .isel() calls)
+        # Ensure we have 2D arrays (lat, lon) - squeeze out any extra dimensions
+        hsi_arr = hsi_data['hsi'].values
+        if hsi_arr.ndim > 2:
+            logger.warning(f"HSI array has {hsi_arr.ndim} dimensions, squeezing to 2D")
+            hsi_arr = np.squeeze(hsi_arr)
+        
+        logger.info(f"HSI array shape: {hsi_arr.shape}, expected: ({len(lats)}, {len(lons)})")
+        
+        # Extract suitability arrays
+        var_arrays = {}
+        for var_name in ['chlorophyll_suitability', 'temperature_suitability', 'salinity_suitability',
+                        'oxygen_suitability', 'oceanographic_suitability', 'depth_suitability', 
+                        'slope_suitability', 'i_phys', 'i_prey', 'i_topo', 'i_anthro']:
+            if var_name in hsi_data.data_vars:
+                arr = hsi_data[var_name].values
+                # Squeeze out extra dimensions if present
+                if arr.ndim > 2:
+                    arr = np.squeeze(arr)
+                var_arrays[var_name] = arr
+        
+        # Pre-filter valid cells using vectorized operations (MAJOR SPEEDUP)
+        valid_mask = ~np.isnan(hsi_arr) & (hsi_arr >= threshold)
+        valid_indices = np.argwhere(valid_mask)
+        
+        logger.info(f"Processing {len(valid_indices)} valid cells (filtered from {hsi_arr.size} total)")
+        
+        # Validate dimensions
+        if len(valid_indices) > 0 and valid_indices.shape[1] != 2:
+            logger.error(f"Invalid valid_indices shape: {valid_indices.shape}. Expected (N, 2) for 2D array.")
+            logger.error(f"HSI array shape: {hsi_arr.shape}, ndim: {hsi_arr.ndim}")
+            return []
+        
+        # Initialize HSIModel once (not per cell!)
+        hsi_model = None
+        profile = None
+        if shark_species and 'i_phys' in var_arrays:
+            hsi_model = HSIModel()
+            profile = hsi_model.shark_profiles.get(shark_species)
+        
+        # Build features using list comprehension (faster than append loop)
         features = []
-        
-        # Extract coordinates and all suitability values
-        hsi = hsi_data['hsi']
-        lats = hsi.lat.values
-        lons = hsi.lon.values
-        
-        # Extract suitability values if available
-        chlorophyll_suitability = hsi_data.get('chlorophyll_suitability', None)
-        sea_level_suitability = hsi_data.get('sea_level_suitability', None)
-        temperature_suitability = hsi_data.get('temperature_suitability', None)
-        salinity_suitability = hsi_data.get('salinity_suitability', None)
-        
-        # Create grid cells as polygons
-        for i, lat in enumerate(lats[:-1]):
-            for j, lon in enumerate(lons[:-1]):
-                hsi_raw = hsi.isel(lat=i, lon=j).values
-                
-                # Skip NaN values
-                if np.isnan(hsi_raw):
-                    continue
-                
-                hsi_value = float(hsi_raw)
-                
-                # Only include cells above threshold
-                if hsi_value >= threshold:
-                    # Create polygon coordinates
-                    lat_step = lats[i+1] - lat
-                    lon_step = lons[j+1] - lon
+        for idx in valid_indices:
+            try:
+                i, j = idx
+            except ValueError as e:
+                logger.error(f"Failed to unpack index {idx}: {e}")
+                logger.error(f"valid_indices shape: {valid_indices.shape}")
+                continue
+            
+            # Skip if out of bounds for grid creation
+            if i >= len(lats) - 1 or j >= len(lons) - 1:
+                continue
+            
+            lat = lats[i]
+            lon = lons[j]
+            hsi_value = float(hsi_arr[i, j])
+            
+            # Grid coordinates represent cell centers, so create polygon centered on that point
+            # by extending half a step in each direction
+            half_lat_step = lat_step / 2
+            half_lon_step = lon_step / 2
+            
+            coordinates = [[
+                [lon - half_lon_step, lat - half_lat_step],
+                [lon + half_lon_step, lat - half_lat_step],
+                [lon + half_lon_step, lat + half_lat_step],
+                [lon - half_lon_step, lat + half_lat_step],
+                [lon - half_lon_step, lat - half_lat_step]
+            ]]
+            
+            # Build properties dict efficiently
+            # Center coordinates are already at the grid point
+            properties = {
+                "hsi": hsi_value,
+                "lat": float(lat),
+                "lon": float(lon)
+            }
+            
+            # Add all available suitability values (vectorized access)
+            for var_name, arr in var_arrays.items():
+                val = arr[i, j]
+                properties[var_name] = float(val) if not np.isnan(val) else 0.0
+            
+            # Calculate component contributions (only if enhanced model and valid)
+            if profile and 'i_phys' in var_arrays:
+                try:
+                    i_phys = float(var_arrays['i_phys'][i, j])
+                    i_prey = float(var_arrays['i_prey'][i, j])
+                    i_topo = float(var_arrays['i_topo'][i, j])
+                    i_anthro = float(var_arrays['i_anthro'][i, j])
                     
-                    coordinates = [
-                        [
-                            [lon, lat],
-                            [lon + lon_step, lat],
-                            [lon + lon_step, lat + lat_step],
-                            [lon, lat + lat_step],
-                            [lon, lat]
-                        ]
-                    ]
-                    
-                    # Create properties with all suitability values
-                    properties = {
-                        "hsi": hsi_value,
-                        "lat": float(lat + lat_step/2),
-                        "lon": float(lon + lon_step/2)
-                    }
-                    
-                    # Add suitability values if available
-                    chl_val = 0.0
-                    sl_val = 0.0
-                    temp_val = 0.0
-
-                    if chlorophyll_suitability is not None:
-                        chl_val = chlorophyll_suitability.isel(lat=i, lon=j).values
-                        properties["chlorophyll_suitability"] = float(chl_val) if not np.isnan(chl_val) else 0.0
-
-                    if sea_level_suitability is not None:
-                        sl_val = sea_level_suitability.isel(lat=i, lon=j).values
-                        properties["sea_level_suitability"] = float(sl_val) if not np.isnan(sl_val) else 0.0
-
-                    if temperature_suitability is not None:
-                        temp_val = temperature_suitability.isel(lat=i, lon=j).values
-                        properties["temperature_suitability"] = float(temp_val) if not np.isnan(temp_val) else 0.0
-
-                    if salinity_suitability is not None:
-                        sal_val = salinity_suitability.isel(lat=i, lon=j).values
-                        properties["salinity_suitability"] = float(sal_val) if not np.isnan(sal_val) else 0.0
-
-                    # Calculate component contributions if we have valid suitability values and shark species
-                    if shark_species and chl_val > 0 and sl_val > 0 and temp_val > 0:
-                        try:
-                            hsi_model = HSIModel()
-                            profile = hsi_model.shark_profiles.get(shark_species)
-                            if profile:
-                                contributions = hsi_model.calculate_component_contributions(
-                                    chl_val, sl_val, temp_val, profile
-                                )
-                                properties["component_contributions"] = contributions
-                        except Exception as e:
-                            logger.warning(f"Could not calculate component contributions: {e}")
-                    
-                    # Create feature
-                    feature = {
-                        "type": "Feature",
-                        "geometry": {
-                            "type": "Polygon",
-                            "coordinates": coordinates
-                        },
-                        "properties": properties
-                    }
-                    
-                    features.append(feature)
+                    if not (np.isnan(i_phys) or np.isnan(i_prey) or np.isnan(i_topo) or np.isnan(i_anthro)):
+                        contributions = hsi_model.calculate_component_contributions(
+                            i_phys, i_prey, i_topo, i_anthro, profile
+                        )
+                        properties["component_contributions"] = contributions
+                except Exception as e:
+                    pass  # Skip contribution calculation on error
+            
+            # Create feature
+            features.append({
+                "type": "Feature",
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": coordinates
+                },
+                "properties": properties
+            })
         
         logger.info(f"Converted HSI data to {len(features)} GeoJSON features")
         return features

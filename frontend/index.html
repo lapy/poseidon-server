@@ -49,13 +49,15 @@
                         <input type="date" id="target-date" class="control-input">
                     </div>
 
-                    <div class="control-group">
-                        <label for="hsi-threshold">
-                            <i class="fas fa-filter"></i>
-                            HSI Threshold
-                        </label>
-                        <input type="range" id="hsi-threshold" min="0" max="1" step="0.1" value="0.5" class="control-input">
-                        <span id="threshold-value">0.5</span>
+                    <div class="control-group threshold-control">
+                        <div class="threshold-header">
+                            <label for="hsi-threshold">
+                                <i class="fas fa-filter"></i>
+                                HSI Threshold
+                            </label>
+                            <span id="threshold-value" class="threshold-value-display">0.5</span>
+                        </div>
+                        <input type="range" id="hsi-threshold" min="0.1" max="1" step="0.05" value="0.5" class="control-input threshold-slider">
                     </div>
 
 
@@ -70,39 +72,52 @@
                     <div class="status-indicator" id="status-indicator">
                         <i class="fas fa-info-circle"></i>
                         <span>Ready to predict hotspots</span>
+                        <button class="status-close" id="status-close" aria-label="Close notification">
+                            <i class="fas fa-times"></i>
+                        </button>
                     </div>
                 </div>
 
 
                      <!-- Data Overlay Controls -->
-                     <div class="overlay-controls-horizontal">
-                        <h3><i class="fas fa-layer-group"></i> Data Overlays</h3>
-                        
+                     <div class="overlay-controls-horizontal" id="overlay-controls" style="display: none;">
+                        <h3><i class="fas fa-layer-group"></i> Habitat Factor Overlays</h3>
+                        <p style="color: #7f8c8d; font-size: 0.85rem; margin-bottom: 1rem;">
+                            Toggle overlays to visualize individual habitat quality factors on the map
+                        </p>
                         <div class="overlay-row">
                             <div class="overlay-item">
-                                <input type="checkbox" id="chlorophyll-overlay" class="overlay-checkbox">
-                                <label for="chlorophyll-overlay" class="overlay-label">
-                                    <i class="fas fa-leaf"></i>
-                                    Chlorophyll
+                                <input type="checkbox" id="i_phys-overlay" class="overlay-checkbox">
+                                <label for="i_phys-overlay" class="overlay-label">
+                                    <i class="fas fa-water" style="color: #667eea;"></i>
+                                    Water Conditions
                                 </label>
                             </div>
-
                             <div class="overlay-item">
-                                <input type="checkbox" id="oceanographic-overlay" class="overlay-checkbox">
-                                <label for="oceanographic-overlay" class="overlay-label">
-                                    <i class="fas fa-water"></i>
-                                    Oceanographic
+                                <input type="checkbox" id="i_prey-overlay" class="overlay-checkbox">
+                                <label for="i_prey-overlay" class="overlay-label">
+                                    <i class="fas fa-fish" style="color: #f093fb;"></i>
+                                    Food Availability*
                                 </label>
                             </div>
-
                             <div class="overlay-item">
-                                <input type="checkbox" id="salinity-overlay" class="overlay-checkbox">
-                                <label for="salinity-overlay" class="overlay-label">
-                                    <i class="fas fa-tint"></i>
-                                    Salinity
+                                <input type="checkbox" id="i_topo-overlay" class="overlay-checkbox">
+                                <label for="i_topo-overlay" class="overlay-label">
+                                    <i class="fas fa-mountain" style="color: #4facfe;"></i>
+                                    Seafloor Quality
+                                </label>
+                            </div>
+                            <div class="overlay-item">
+                                <input type="checkbox" id="i_anthro-overlay" class="overlay-checkbox">
+                                <label for="i_anthro-overlay" class="overlay-label">
+                                    <i class="fas fa-exclamation-triangle" style="color: #e74c3c;"></i>
+                                    Human Impact
                                 </label>
                             </div>
                         </div>
+                        <p style="color: #95a5a6; font-size: 0.7rem; margin-top: 0.75rem; font-style: italic;">
+                            * Limited data: Food Availability based on productivity only
+                        </p>
                     </div>
 
 
@@ -112,10 +127,10 @@
                     
                     <!-- Map Controls -->
                     <div class="map-controls">
-                        <button id="toggle-heatmap" class="map-control-btn" title="Toggle Heatmap">
+                        <button id="toggle-heatmap" class="map-control-btn active" title="Toggle Heatmap">
                             <i class="fas fa-fire"></i>
                         </button>
-                        <button id="toggle-polygons" class="map-control-btn active" title="Toggle Polygons">
+                        <button id="toggle-polygons" class="map-control-btn" title="Toggle Polygons">
                             <i class="fas fa-th"></i>
                         </button>
                         <button id="reset-map" class="map-control-btn" title="Reset View">
@@ -128,45 +143,48 @@
                         <h4>Habitat Suitability Index (HSI)</h4>
                         <div class="legend-scale">
                             <div class="legend-item">
-                                <div class="legend-color" style="background: rgba(0, 0, 255, 0.1);"></div>
-                                <span>0.0 - 0.2</span>
+                                <div class="legend-color" style="background: rgba(139, 0, 0, 0.7);"></div>
+                                <span>0.0 - 0.2 <em style="color: #999;">(Unsuitable)</em></span>
                             </div>
                             <div class="legend-item">
-                                <div class="legend-color" style="background: rgba(0, 255, 255, 0.3);"></div>
-                                <span>0.2 - 0.4</span>
-                            </div>
-                            <div class="legend-item">
-                                <div class="legend-color" style="background: rgba(0, 255, 0, 0.5);"></div>
-                                <span>0.4 - 0.6</span>
+                                <div class="legend-color" style="background: rgba(255, 69, 0, 0.7);"></div>
+                                <span>0.2 - 0.4 <em style="color: #999;">(Poor)</em></span>
                             </div>
                             <div class="legend-item">
                                 <div class="legend-color" style="background: rgba(255, 255, 0, 0.7);"></div>
-                                <span>0.6 - 0.8</span>
+                                <span>0.4 - 0.6 <em style="color: #999;">(Moderate)</em></span>
                             </div>
                             <div class="legend-item">
-                                <div class="legend-color" style="background: rgba(255, 165, 0, 0.8);"></div>
-                                <span>0.8 - 1.0</span>
+                                <div class="legend-color" style="background: rgba(144, 238, 144, 0.8);"></div>
+                                <span>0.6 - 0.8 <em style="color: #999;">(Good)</em></span>
+                            </div>
+                            <div class="legend-item">
+                                <div class="legend-color" style="background: rgba(0, 100, 0, 1.0);"></div>
+                                <span>0.8 - 1.0 <em style="color: #999;">(Optimal)</em></span>
                             </div>
                         </div>
                         
                         <!-- Overlay Legend -->
                         <div class="overlay-legend" id="overlay-legend" style="display: none;">
-                            <h4>Data Overlays</h4>
+                            <h4>Habitat Factors</h4>
                             <div class="legend-item">
-                                <div class="legend-color" style="background: #228B22;"></div>
-                                <span>Chlorophyll</span>
+                                <div class="legend-color" style="background: #667eea;"></div>
+                                <span>🌊 Water Conditions</span>
                             </div>
                             <div class="legend-item">
-                                <div class="legend-color" style="background: #0064C8;"></div>
-                                <span>Oceanographic</span>
+                                <div class="legend-color" style="background: #f093fb;"></div>
+                                <span>🐟 Food Availability*</span>
                             </div>
                             <div class="legend-item">
-                                <div class="legend-color" style="background: #008080;"></div>
-                                <span>Salinity (Suitable)</span>
+                                <div class="legend-color" style="background: #4facfe;"></div>
+                                <span>🗺️ Seafloor Quality</span>
                             </div>
                             <div class="legend-item">
-                                <div class="legend-color" style="background: #FF0000;"></div>
-                                <span>Salinity (Unsuitable)</span>
+                                <div class="legend-color" style="background: #e74c3c;"></div>
+                                <span>⚠️ Human Impact*</span>
+                            </div>
+                            <div style="margin-top: 0.5rem; padding-top: 0.5rem; border-top: 1px solid #ddd; font-size: 0.7rem; color: #7f8c8d;">
+                                * Limited data available
                             </div>
                         </div>
                     </div>
@@ -174,13 +192,29 @@
 
                 <!-- Results Panel -->
                 <div class="results-panel" id="results-panel" style="display: none;">
-                    <h3>Prediction Results</h3>
-                    <div class="results-content">
-                        <div class="result-stats" id="result-stats">
+                    <h3><i class="fas fa-chart-line"></i> Prediction Results</h3>
+                    
+                    <!-- Top Row: Overview and Data Sources (shorter content) -->
+                    <div class="results-row">
+                        <div class="result-section" id="result-overview">
+                            <!-- Overview will be populated here -->
+                        </div>
+                        <div class="result-section" id="result-data">
+                            <!-- Data sources will be populated here -->
+                        </div>
+                    </div>
+                    
+                    <!-- Second Row: Statistics -->
+                    <div class="results-row">
+                        <div class="result-section" id="result-stats">
                             <!-- Statistics will be populated here -->
                         </div>
-                        <div class="result-info" id="result-info">
-                            <!-- Additional info will be populated here -->
+                    </div>
+                    
+                    <!-- Third Row: Ecological Profile (full width, 2-column layout) -->
+                    <div class="results-row">
+                        <div class="result-section result-section-wide" id="result-model">
+                            <!-- Model parameters will be populated here -->
                         </div>
                     </div>
                 </div>
